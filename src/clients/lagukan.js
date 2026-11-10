@@ -32,6 +32,7 @@ class LagukanClient extends Client {
         this.config = config;
         this.guildData = require("../databases/schema/guild.js");
         this.userData = require("../databases/schema/user.js");
+        this.serverTagConfigData = require("../databases/schema/serverTagConfig.js");
         this.serverTagMemberData = require("../databases/schema/serverTagMember.js");
         this.serverMembersIntentFallback = false;
         this.prefix = new Collection();

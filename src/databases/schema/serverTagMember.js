@@ -22,6 +22,7 @@ const serverTagMemberSchema = new mongoose.Schema({
 
 serverTagMemberSchema.index({ guildId: 1, userId: 1 }, { unique: true });
 serverTagMemberSchema.index({ guildId: 1, "currentTag.identityEnabled": 1 });
+serverTagMemberSchema.index({ userId: 1, "currentTag.identityEnabled": 1 });
 
 module.exports = mongoose.models.serverTagMember || mongoose.model("serverTagMember", serverTagMemberSchema);
 

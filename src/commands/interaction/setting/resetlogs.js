@@ -1,4 +1,4 @@
-const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { EmbedBuilder, MessageFlags, escapeMarkdown } = require("discord.js");
 const {
     TAG_COLORS,
     FOOTER_TEXT,
@@ -9,7 +9,7 @@ const {
 
 module.exports = {
     name: "resetlogs",
-    description: "Hapus pengaturan channel log dan nonaktifkan Server Tag Logger",
+    description: "Hapus konfigurasi channel log Server Tag pada server ini",
     category: "setting",
     locale: "id",
     options: [],
@@ -31,7 +31,8 @@ module.exports = {
 
         await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
-        const guild = interaction.guild;
+        const guildId = interaction.guildId;
+        const guild = interaction.guild || client.guilds.cache.get(guildId);
         const botAvatar = client.user?.displayAvatarURL?.({ size: 128 }) || undefined;
         const { wasConfigured, previousChannelId, config } = await resetServerTagLogChannel(client, guild, interaction.user.id);
 
@@ -42,9 +43,9 @@ module.exports = {
                     name: `${guild.name} • Konfigurasi Server Tag Logger`,
                     iconURL: guild.iconURL?.({ size: 128 }) || botAvatar,
                 })
-                .setTitle("ℹ️ Channel Log Belum Diatur")
+                .setTitle("ℹ️ Konfigurasi Log Belum Aktif")
                 .setDescription(
-                    "Pengaturan channel **Server Tag Logger** di server ini memang belum aktif atau sudah dihapus sebelumnya.\n\nGunakan `/setlogs` apabila ingin mulai mengaktifkan pencatatan log.",
+                    `Channel log **Server Tag** untuk server **${escapeMarkdown(guild.name)}** (\`${guildId}\`) memang belum diatur atau sudah dinonaktifkan.\n\nGunakan \`/setlogs\` apabila ingin mengaktifkan pencatatan.`,
                 )
                 .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
                 .setTimestamp();
@@ -53,9 +54,9 @@ module.exports = {
         }
 
         const totalRecorded =
-            (Number(config?.stats?.totalInstalled) || 0) +
-            (Number(config?.stats?.totalChanged) || 0) +
-            (Number(config?.stats?.totalRemoved) || 0);
+            (Number(config?.statistics?.installed) || 0) +
+            (Number(config?.statistics?.changed) || 0) +
+            (Number(config?.statistics?.removed) || 0);
 
         const embed = new EmbedBuilder()
             .setColor(TAG_COLORS.INFO)
@@ -63,17 +64,18 @@ module.exports = {
                 name: `${guild.name} • Konfigurasi Server Tag Logger`,
                 iconURL: guild.iconURL?.({ size: 128 }) || botAvatar,
             })
-            .setTitle("🗑️ Pengaturan Channel Log Berhasil Direset")
+            .setTitle("🗑️ Konfigurasi Log Server Berhasil Direset")
             .setDescription(
-                "Pengiriman notifikasi otomatis **Server Tag Logger** di server ini telah dinonaktifkan dan konfigurasi channel log telah dihapus.",
+                `Pengaturan channel log **Server Tag** untuk server **${escapeMarkdown(guild.name)}** telah dihapus dan pengiriman notifikasi dinonaktifkan tanpa memengaruhi server lain.`,
             )
             .addFields({
-                name: "📋 Detail Perubahan",
+                name: "📋 Detail Reset Server Ini",
                 value: [
+                    `• **Server:** **${escapeMarkdown(guild.name)}** (\`${guildId}\`)`,
                     `• **Channel Sebelumnya:** ${previousChannelId ? `<#${previousChannelId}> (\`${previousChannelId}\`)` : "`Tidak ada`"}`,
-                    `• **Status Fitur Sekarang:** 🔴 Nonaktif`,
+                    `• **Status Sekarang:** 🔴 Nonaktif`,
                     `• **Direset Oleh:** <@${interaction.user.id}>`,
-                    `• **Data Statistik Server:** Tetap tersimpan di database (\`${totalRecorded}\` total aktivitas historis)`,
+                    `• **Statistik Tersimpan:** \`${totalRecorded}\` total aktivitas historis server ini tetap aman`,
                 ].join("\n"),
                 inline: false,
             })

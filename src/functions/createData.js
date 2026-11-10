@@ -4,8 +4,6 @@ function normalizeGuildData(client, guild, rawData = {}) {
     const envVoice = client.config?.voiceLog || { enabled: true };
     const defaultTz = client.config?.timezone || "Asia/Jakarta";
     const voiceSource = rawData.voiceLog?.source || "env";
-    const rawTagLog = rawData.serverTagLog || {};
-    const rawTagStats = rawTagLog.stats || {};
 
     return {
         id: rawData.id || guild?.id,
@@ -18,19 +16,6 @@ function normalizeGuildData(client, guild, rawData = {}) {
             enabled: voiceSource === "command" ? Boolean(rawData.voiceLog?.enabled) : Boolean(envVoice.enabled),
             timezone: voiceSource === "command" ? rawData.voiceLog?.timezone || defaultTz : defaultTz,
             source: voiceSource,
-        },
-        serverTagLog: {
-            enabled: Boolean(rawTagLog.enabled && rawTagLog.channelId),
-            channelId: rawTagLog.channelId || null,
-            updatedBy: rawTagLog.updatedBy || null,
-            updatedAt: rawTagLog.updatedAt || null,
-            stats: {
-                totalInstalled: Math.max(0, Number(rawTagStats.totalInstalled) || 0),
-                totalChanged: Math.max(0, Number(rawTagStats.totalChanged) || 0),
-                totalRemoved: Math.max(0, Number(rawTagStats.totalRemoved) || 0),
-                totalReinstalled: Math.max(0, Number(rawTagStats.totalReinstalled) || 0),
-            },
-            recentHistory: Array.isArray(rawTagLog.recentHistory) ? rawTagLog.recentHistory.slice(0, 25) : [],
         },
     };
 }
@@ -53,7 +38,6 @@ module.exports = {
                         id: guild.id,
                         reconnect: defaults.reconnect,
                         voiceLog: defaults.voiceLog,
-                        serverTagLog: defaults.serverTagLog,
                     },
                 },
                 { upsert: true, returnDocument: "after" },
