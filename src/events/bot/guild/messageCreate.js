@@ -1,6 +1,7 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, PermissionsBitField } = require("discord.js");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
 const { createDataGuild, createDataUser } = require("../../../functions/createData.js");
 const { permissions } = require("../../../functions/getPermission.js");
+const Logger = require("../../../utils/logger");
 
 module.exports = async (client, message) => {
     if (message.author.bot || !message.guild || message.system || message.webhookId) return;
@@ -8,6 +9,7 @@ module.exports = async (client, message) => {
     await createDataGuild(client, message.guild);
     await createDataUser(client, message.author);
 
+    const botName = client.config.botName || "Lagukan";
     const userData = client.data.get(`userData_${message.author.id}`);
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
     const row = new ActionRowBuilder().addComponents(
@@ -22,7 +24,7 @@ module.exports = async (client, message) => {
     }
 
     if (botMissingPermissions.length > 0) {
-        const content = `The bot doesn't have one of these permissions \`${botMissingPermissions.join(", ")}\`.\nPlease double check them in your server role & channel settings.`;
+        const content = `${botName} doesn't have one of these permissions \`${botMissingPermissions.join(", ")}\`.\nPlease double check them in your server role & channel settings.`;
 
         const dmChannel = message.author.dmChannel == null ? await message.author.createDM() : message.author.dmChannel;
 
@@ -32,14 +34,15 @@ module.exports = async (client, message) => {
     const mention = new RegExp(`^<@!?${client.user.id}>( |)$`);
 
     if (message.content.match(mention)) {
-        embed.setDescription(`Use \`/help\` command to get list of commands.`);
+        embed.setDescription(`Hello! I'm **${botName} Music Bot**. Use \`/help\` command to get list of commands.`);
 
         message.reply({ embeds: [embed] });
     }
 
     let prefix = client.config.prefix;
 
-    if (message.content.startsWith(prefix) && message.author.id !== client.config.owner) return;
+    if (message.content.startsWith(prefix) && message.author.id !== client.config.owner && !client.config.dev.includes(message.author.id))
+        return;
     if (!message.content.startsWith(prefix) && client.config.owner === message.author.id) {
         prefix = "";
     }
@@ -65,7 +68,7 @@ module.exports = async (client, message) => {
     );
 
     if (userData && userData.ban.status) {
-        embed.setDescription(`You have been banned from using the bot.\n\`\`\`${userData.ban.reason}\`\`\``);
+        embed.setDescription(`You have been banned from using ${botName}.\n\`\`\`${userData.ban.reason}\`\`\``);
 
         return message.reply({ embeds: [embed] });
     }
@@ -73,7 +76,7 @@ module.exports = async (client, message) => {
     const maintenance = client.data.get("maintenance");
 
     if (maintenance && !client.config.dev.includes(message.author.id)) {
-        embed.setDescription(`The bot is currently under maintenance. Please try again later.`);
+        embed.setDescription(`${botName} is currently under maintenance. Please try again later.`);
 
         return message.reply({ embeds: [embed] });
     }
@@ -84,10 +87,6 @@ module.exports = async (client, message) => {
 };
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

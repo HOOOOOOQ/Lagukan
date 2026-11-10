@@ -11,14 +11,10 @@ const manager = new ClusterManager(`${__dirname}/clients/manager.js`, {
     token: process.env.TOKEN || token, // put token in .env file or put it in /src/settings/config.js
 });
 
-manager.on("clusterCreate", (cluster) => Logger.info(`Launched cluster ${cluster.id}`));
+manager.on("clusterCreate", (cluster) => Logger.info(`Launched Lagukan cluster ${cluster.id}`));
 manager.spawn({ timeout: -1 });
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

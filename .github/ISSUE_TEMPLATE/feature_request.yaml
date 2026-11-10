@@ -1,9 +1,9 @@
 name: "Feature request"
-description: "Suggest an idea to this repo"
+description: "Suggest an idea for Lagukan Music Bot"
 title: "[Feature Request]: "
 labels: ["enhancement"]
 assignees:
-    - adh319
+    - HOOOOOOQ
 body:
     - type: markdown
       attributes:
@@ -12,7 +12,7 @@ body:
       id: description
       attributes:
           label: "Description of your suggestion"
-          description: "Explain your idea with screenshoots, example, etc"
+          description: "Explain your idea with screenshots, examples, etc."
           placeholder: "Explain your idea"
       validations:
           required: true

@@ -3,7 +3,7 @@ const { convertTime } = require("../../../functions/timeFormat.js");
 
 module.exports = {
     name: "play",
-    description: "Play a song",
+    description: "Play a song or playlist with Lagukan",
     category: "music",
     options: [
         {
@@ -24,10 +24,11 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
+        const botName = client.config.botName || "Lagukan";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
         if (player && player.voiceId !== interaction.member.voice.channelId) {
-            embed.setDescription(`You must be in the same voice channel as the bot.`);
+            embed.setDescription(`You must be in the same voice channel as ${botName}.`);
 
             return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
         }
@@ -77,10 +78,6 @@ function formatString(str, maxLength) {
 }
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

@@ -2,7 +2,7 @@ const { EmbedBuilder, MessageFlags } = require("discord.js");
 
 module.exports = {
     name: "autoplay",
-    description: "Toggle autoplay mode",
+    description: "Toggle Lagukan autoplay mode",
     category: "setting",
     permissions: {
         bot: [],
@@ -20,7 +20,7 @@ module.exports = {
 
         if (!isYoutube(track)) {
             embed.setDescription(
-                `${player.queue.isEmpty() ? "The current song platform is not supported" : "The last queue platform is not supported"}. Autoplay mode can only be used with YouTube.`,
+                `${player.queue.isEmpty ? "The current song platform is not supported" : "The last queue platform is not supported"}. Autoplay mode can only be used with YouTube.`,
             );
 
             return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
@@ -47,10 +47,6 @@ function isYoutube(track) {
 }
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

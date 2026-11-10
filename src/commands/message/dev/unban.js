@@ -3,7 +3,7 @@ const { EmbedBuilder } = require("discord.js");
 module.exports = {
     name: "unban",
     aliases: ["unblock"],
-    description: "Unban a user",
+    description: "Unban a user from using Lagukan",
     category: "dev",
     permissions: {
         bot: [],
@@ -30,7 +30,7 @@ module.exports = {
         if (!userData) {
             const newUserData = await client.userData.findOneAndUpdate(
                 { id: user.id },
-                { $set: { ban: { status: true, reason: reason || "No reason provided" } } },
+                { $setOnInsert: { id: user.id, ban: { status: false, reason: null } } },
                 { upsert: true, new: true },
             );
             const { _id, __v, ...data } = newUserData.toObject();
@@ -55,10 +55,6 @@ module.exports = {
 };
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

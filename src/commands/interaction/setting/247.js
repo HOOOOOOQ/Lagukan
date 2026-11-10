@@ -2,7 +2,7 @@ const { EmbedBuilder, MessageFlags } = require("discord.js");
 
 module.exports = {
     name: "247",
-    description: "Toggle 247 mode",
+    description: "Toggle Lagukan 24/7 mode",
     category: "setting",
     permissions: {
         bot: [],
@@ -25,17 +25,13 @@ module.exports = {
 
         const embed = new EmbedBuilder()
             .setColor(client.config.embedColor)
-            .setDescription(guildData.reconnect.status ? "247 mode is now `enabled`." : "247 mode is now `disabled`.");
+            .setDescription(guildData.reconnect.status ? "24/7 mode is now `enabled`." : "24/7 mode is now `disabled`.");
 
         return interaction.editReply({ embeds: [embed] });
     },
 };
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

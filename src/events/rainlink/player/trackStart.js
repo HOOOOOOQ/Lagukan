@@ -4,6 +4,7 @@ const { convertTime } = require("../../../functions/timeFormat.js");
 module.exports = async (client, player, track) => {
     if (!player) return;
 
+    const botName = client.config.botName || "Lagukan";
     const formatString = (str, maxLength) => (str.length > maxLength ? str.substr(0, maxLength - 3) + "..." : str);
     const trackTitle = formatString(track.title || "Unknown", 30).replace(/ - Topic$/, "");
     const trackAuthor = formatString(track.author || "Unknown", 25).replace(/ - Topic$/, "");
@@ -11,7 +12,10 @@ module.exports = async (client, player, track) => {
     const playerEmoji = client.emoji.player;
 
     const trackMsg = new EmbedBuilder()
-        .setAuthor({ name: player.paused ? "Song Paused" : "Now Playing", iconURL: client.user.displayAvatarURL() })
+        .setAuthor({
+            name: player.paused ? `${botName} • Song Paused` : `${botName} • Now Playing`,
+            iconURL: client.user.displayAvatarURL(),
+        })
         .setColor(client.config.embedColor)
         .setThumbnail(track.artworkUrl)
         .setDescription(`**[${trackTitle} - ${trackAuthor}](${track.uri})**`)
@@ -19,7 +23,8 @@ module.exports = async (client, player, track) => {
             { name: "Source", value: `${capitalize(track.source)}`, inline: true },
             { name: "Duration", value: `\`${trackDuration}\``, inline: true },
             { name: "Requested by", value: `${track.requester}`, inline: true },
-        );
+        )
+        .setFooter({ text: `${botName} Music Bot`, iconURL: client.user.displayAvatarURL() });
 
     const button = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -49,7 +54,7 @@ module.exports = async (client, player, track) => {
 
         // Prevent user from using buttons if they are not in the same voice channel
         if (!message.member.voice.channel || player.voiceId !== message.member.voice.channelId) {
-            embed.setDescription(`You must be in the same voice channel as the bot.`);
+            embed.setDescription(`You must be in the same voice channel as ${botName}.`);
 
             return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
         }
@@ -69,14 +74,14 @@ module.exports = async (client, player, track) => {
                     player.pause();
 
                     button.components[0].setEmoji(playerEmoji.resume).setStyle(ButtonStyle.Primary);
-                    trackMsg.setAuthor({ name: "Song Paused", iconURL: client.user.displayAvatarURL() });
+                    trackMsg.setAuthor({ name: `${botName} • Song Paused`, iconURL: client.user.displayAvatarURL() });
                 } else {
                     message.deferUpdate();
 
                     player.resume();
 
                     button.components[0].setEmoji(playerEmoji.pause).setStyle(ButtonStyle.Secondary);
-                    trackMsg.setAuthor({ name: "Now Playing", iconURL: client.user.displayAvatarURL() });
+                    trackMsg.setAuthor({ name: `${botName} • Now Playing`, iconURL: client.user.displayAvatarURL() });
                 }
 
                 await nplaying.edit({ embeds: [trackMsg], components: [button, button2] });
@@ -177,10 +182,6 @@ function capitalize(string) {
 }
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

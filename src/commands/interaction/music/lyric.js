@@ -4,7 +4,7 @@ const gsearch = require("google-search-url");
 
 module.exports = {
     name: "lyric",
-    description: "Get the lyric of the current song",
+    description: "Get the lyrics of the current song",
     category: "music",
     permissions: {
         bot: [],
@@ -17,6 +17,7 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
+        const botName = client.config.botName || "Lagukan";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
         const formatText = (text) =>
             text
@@ -46,7 +47,7 @@ module.exports = {
         if (lyricText.length <= 4096) {
             embed
                 .setAuthor({
-                    name: `${client.user.username} Lyrics`,
+                    name: `${botName} Lyrics`,
                     iconURL: client.user.displayAvatarURL(),
                 })
                 .setThumbnail(track.artworkUrl)
@@ -60,7 +61,7 @@ module.exports = {
         } else {
             embed
                 .setAuthor({
-                    name: `${client.user.username} Lyrics`,
+                    name: `${botName} Lyrics`,
                     iconURL: client.user.displayAvatarURL(),
                 })
                 .setThumbnail(track.artworkUrl)
@@ -93,10 +94,6 @@ async function lyricFind(title, author) {
 }
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */
