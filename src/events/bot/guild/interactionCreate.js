@@ -3,6 +3,7 @@ const { permissions } = require("../../../functions/getPermission.js");
 const { createDataGuild, createDataUser } = require("../../../functions/createData.js");
 const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
 const { handleTagRoleComponentInteraction, handleCrossGuildUserTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
+const { handleCustomRoleInteraction } = require("../../../functions/customRoleSystem.js");
 const { buildSupportComponents, safeReply, isUnknownInteractionError } = require("../../../functions/interactionResponder.js");
 const Logger = require("../../../utils/logger");
 
@@ -16,6 +17,18 @@ module.exports = async (client, interaction) => {
         } catch (err) {
             if (!isUnknownInteractionError(err)) {
                 Logger.error("[ServerTagAutoRole] Error pada komponen interaksi /settagrole:", err);
+            }
+        }
+        return;
+    }
+
+    // Handle interactive dashboard, Color/Gradient/Image studios, and Modals for `/customrole`
+    if (typeof interaction.customId === "string" && interaction.customId.startsWith("customrole:")) {
+        try {
+            await handleCustomRoleInteraction(client, interaction);
+        } catch (err) {
+            if (!isUnknownInteractionError(err)) {
+                Logger.error("[CustomRole] Error pada interaksi /customrole:", err);
             }
         }
         return;

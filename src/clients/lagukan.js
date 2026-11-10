@@ -36,6 +36,8 @@ class LagukanClient extends Client {
         this.serverTagConfigData = require("../databases/schema/serverTagConfig.js");
         this.serverTagMemberData = require("../databases/schema/serverTagMember.js");
         this.serverTagAutoRoleData = require("../databases/schema/serverTagAutoRole.js");
+        this.customRoleData = require("../databases/schema/customRole.js");
+        this.customRolePolicyData = require("../databases/schema/customRolePolicy.js");
         this.serverMembersIntentFallback = false;
         this.prefix = new Collection();
         this.aliases = new Collection();
