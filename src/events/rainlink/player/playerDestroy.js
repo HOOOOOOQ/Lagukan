@@ -1,61 +1,84 @@
-const { isGuildManuallyDisconnected, isGuildLeavingInProgress } = require("../../../functions/voiceSessionManager.js");
+const {
+    isGuildManuallyDisconnected,
+    isGuildLeavingInProgress,
+    hasActiveGuildPlayer,
+    prepareGuildForReconnect,
+} = require("../../../functions/voiceSessionManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, player) => {
-    if (!player) return;
+    try {
+        if (!player) return;
 
-    const guildId = String(player.guildId || "");
-    const guild = client.guilds.cache.get(guildId);
+        const guildId = String(player.guildId || "");
+        if (!guildId) return;
 
-    if (guild) {
-        Logger.debug(`Player destroyed from [${guild.name}] (${guild.id})`);
-    }
+        const guild = client.guilds.cache.get(guildId);
 
-    if (player.message) {
-        player.message.delete().catch(() => {});
-        player.message = null;
-    }
+        if (guild) {
+            Logger.debug(`Player destroyed from [${guild.name}] (${guild.id})`);
+        }
 
-    // Never auto-reconnect if this guild was intentionally disconnected via /leave
-    if (!guild || isGuildManuallyDisconnected(client, guildId) || isGuildLeavingInProgress(guildId)) {
-        return;
-    }
+        if (player.message) {
+            player.message.delete().catch(() => {});
+            player.message = null;
+        }
 
-    const guildData = client.data.get(`guildData_${guild.id}`);
-
-    if (guildData && !guildData.manualDisconnect && guildData.reconnect?.status) {
-        if (client.rainlink.players.has(guild.id)) return;
-
-        const voice = client.channels.cache.get(guildData.reconnect.voice);
-        const text = client.channels.cache.get(guildData.reconnect.text);
-
-        if (!voice || !text) {
-            guildData.reconnect = { status: false, text: null, voice: null };
-            client.data.set(`guildData_${guild.id}`, guildData);
-
-            await client.guildData
-                ?.findOneAndUpdate(
-                    { id: guild.id },
-                    { $set: { reconnect: guildData.reconnect } },
-                    { upsert: true, returnDocument: "after" },
-                )
-                .catch(() => {});
-
+        // Never auto-reconnect if this guild was intentionally disconnected via /leave
+        if (!guild || isGuildManuallyDisconnected(client, guildId) || isGuildLeavingInProgress(guildId)) {
             return;
         }
 
-        if (isGuildManuallyDisconnected(client, guildId) || isGuildLeavingInProgress(guildId)) {
-            return;
-        }
+        const guildData = client.data.get(`guildData_${guild.id}`);
 
-        return await client.rainlink.create({
-            guildId: guild.id,
-            voiceId: voice.id,
-            textId: text.id,
-            shardId: guild.shardId,
-            volume: client.config.defaultVolume,
-            deaf: true,
-        });
+        if (guildData && !guildData.manualDisconnect && guildData.reconnect?.status) {
+            if (!client?.rainlink?.players || typeof client.rainlink.players.get !== "function") {
+                return;
+            }
+
+            if (hasActiveGuildPlayer(client, guild.id)) {
+                return;
+            }
+
+            const voice = client.channels.cache.get(guildData.reconnect.voice);
+            const text = client.channels.cache.get(guildData.reconnect.text);
+
+            if (!voice || !text) {
+                guildData.reconnect = { status: false, text: null, voice: null };
+                client.data.set(`guildData_${guild.id}`, guildData);
+
+                await client.guildData
+                    ?.findOneAndUpdate(
+                        { id: guild.id },
+                        { $set: { reconnect: guildData.reconnect } },
+                        { upsert: true, returnDocument: "after" },
+                    )
+                    .catch(() => {});
+
+                return;
+            }
+
+            const shouldCreate = await prepareGuildForReconnect(client, guild.id);
+            if (!shouldCreate || isGuildManuallyDisconnected(client, guildId) || isGuildLeavingInProgress(guildId)) {
+                return;
+            }
+
+            return await client.rainlink
+                .create({
+                    guildId: guild.id,
+                    voiceId: voice.id,
+                    textId: text.id,
+                    shardId: guild.shardId,
+                    volume: client.config.defaultVolume,
+                    deaf: true,
+                })
+                .catch((err) => {
+                    Logger.debug(`[PlayerDestroy] Gagal auto-reconnect player di server ${guild.id}: ${err?.message || err}`);
+                    return null;
+                });
+        }
+    } catch (error) {
+        Logger.error("[PlayerDestroy] Gagal memproses event playerDestroy:", error);
     }
 };
 

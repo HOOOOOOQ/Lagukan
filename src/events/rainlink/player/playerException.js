@@ -1,11 +1,15 @@
 const { EmbedBuilder } = require("discord.js");
-const { isGuildManuallyDisconnected, isGuildLeavingInProgress } = require("../../../functions/voiceSessionManager.js");
+const {
+    PLAYER_STATE_DESTROYED,
+    isGuildManuallyDisconnected,
+    isGuildLeavingInProgress,
+} = require("../../../functions/voiceSessionManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, player, data) => {
     if (
         !player ||
-        player.state === 2 ||
+        player.state === PLAYER_STATE_DESTROYED ||
         player.sudoDestroy ||
         isGuildManuallyDisconnected(client, player.guildId) ||
         isGuildLeavingInProgress(player.guildId)
@@ -35,7 +39,9 @@ module.exports = async (client, player, data) => {
         if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
     }
 
-    return player.skip();
+    if (player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
+        await Promise.resolve(player.skip()).catch(() => {});
+    }
 };
 
 /**

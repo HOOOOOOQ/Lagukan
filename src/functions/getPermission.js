@@ -1,6 +1,7 @@
 const { EmbedBuilder, MessageFlags, PermissionsBitField } = require("discord.js");
 const Logger = require("../utils/logger");
 const { safeReply, isUnknownInteractionError, isAlreadyAcknowledgedError } = require("./interactionResponder.js");
+const { getGuildPlayer } = require("./voiceSessionManager.js");
 
 function resolveMemberPermissions(response) {
     if (response?.memberPermissions && typeof response.memberPermissions.has === "function") {
@@ -73,7 +74,7 @@ module.exports = {
             }
         }
 
-        let player = client.rainlink.players.get(response.guild.id);
+        let player = getGuildPlayer(client, response.guild?.id);
 
         if (command.settings.player) {
             if (!player) {
