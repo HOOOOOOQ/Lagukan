@@ -1,7 +1,8 @@
 const { handleUserTagUpdate } = require("../../../functions/serverTagLogger.js");
+const { handleCrossGuildUserTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
 
 module.exports = async (client, oldUser, newUser) => {
-    await handleUserTagUpdate(client, oldUser, newUser).catch(() => {});
+    await Promise.allSettled([handleUserTagUpdate(client, oldUser, newUser), handleCrossGuildUserTagAutoRole(client, newUser)]);
 };
 
 /**

@@ -2,6 +2,7 @@ const { Client, Collection, GatewayIntentBits, Partials } = require("discord.js"
 const { ClusterClient, getInfo } = require("discord-hybrid-sharding");
 const { Rainlink, Library } = require("rainlink");
 const config = require("../settings/config.js");
+const { attachAutoRoleGatewayListener } = require("../functions/serverTagAutoRole.js");
 const Logger = require("../utils/logger");
 
 class LagukanClient extends Client {
@@ -34,6 +35,7 @@ class LagukanClient extends Client {
         this.userData = require("../databases/schema/user.js");
         this.serverTagConfigData = require("../databases/schema/serverTagConfig.js");
         this.serverTagMemberData = require("../databases/schema/serverTagMember.js");
+        this.serverTagAutoRoleData = require("../databases/schema/serverTagAutoRole.js");
         this.serverMembersIntentFallback = false;
         this.prefix = new Collection();
         this.aliases = new Collection();
@@ -52,6 +54,8 @@ class LagukanClient extends Client {
         ["anticrash", "database", "events", "commands", "rainlink"].forEach((handler) => {
             require(`../handlers/${handler}`)(this);
         });
+
+        attachAutoRoleGatewayListener(this);
 
         this.cluster = new ClusterClient(this);
     }

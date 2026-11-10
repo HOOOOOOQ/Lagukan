@@ -2,11 +2,24 @@ const { EmbedBuilder, InteractionType, MessageFlags } = require("discord.js");
 const { permissions } = require("../../../functions/getPermission.js");
 const { createDataGuild, createDataUser } = require("../../../functions/createData.js");
 const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
+const { handleTagRoleComponentInteraction, handleCrossGuildUserTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
 const { buildSupportComponents, safeReply, isUnknownInteractionError } = require("../../../functions/interactionResponder.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, interaction) => {
     if (!interaction?.guild || interaction.user?.bot) return;
+
+    // Handle interactive dropdown & buttons for `/settagrole`
+    if (typeof interaction.customId === "string" && interaction.customId.startsWith("tagrole:")) {
+        try {
+            await handleTagRoleComponentInteraction(client, interaction);
+        } catch (err) {
+            if (!isUnknownInteractionError(err)) {
+                Logger.error("[ServerTagAutoRole] Error pada komponen interaksi /settagrole:", err);
+            }
+        }
+        return;
+    }
 
     const isSlashCommand =
         typeof interaction.isChatInputCommand === "function"
@@ -19,6 +32,10 @@ module.exports = async (client, interaction) => {
     createDataGuild(client, interaction.guild).catch(() => {});
     createDataUser(client, interaction.user).catch(() => {});
     handlePassiveMemberObservation(client, interaction.guild, interaction.user, interaction.member).catch(() => {});
+    handleCrossGuildUserTagAutoRole(client, interaction.user, {
+        originGuildId: interaction.guild.id,
+        member: interaction.member?.roles?.add ? interaction.member : undefined,
+    }).catch(() => {});
 
     const command = client.slash.get(interaction.commandName);
     if (!command) return;
