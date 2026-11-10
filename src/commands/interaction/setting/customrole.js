@@ -2,8 +2,9 @@ const { EmbedBuilder, MessageFlags } = require("discord.js");
 const {
     CR_COLORS,
     CR_FOOTER,
-    isUserStrictAdmin,
+    canManageCustomRoleConfig,
     checkCustomRoleAccess,
+    buildCustomRoleAccessDeniedEmbed,
     buildCustomRoleDashboard,
 } = require("../../../functions/customRoleSystem.js");
 const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
@@ -45,18 +46,13 @@ module.exports = {
 
         const access = await checkCustomRoleAccess(client, guild, interaction);
         if (!access.allowed) {
-            const deniedEmbed = new EmbedBuilder()
-                .setColor(CR_COLORS.ERROR)
-                .setTitle("⛔ Akses Custom Role Dibatasi")
-                .setDescription(access.reason)
-                .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
-                .setTimestamp();
-
+            const deniedEmbed = buildCustomRoleAccessDeniedEmbed(client, access.code);
             return safeEditReply(interaction, { embeds: [deniedEmbed] });
         }
 
         const dashboardPayload = await buildCustomRoleDashboard(client, guild, interaction.user, {
-            isStrictAdmin: isUserStrictAdmin(interaction, guild),
+            config: access.config,
+            canManageConfig: canManageCustomRoleConfig(interaction, guild),
         });
 
         return safeEditReply(interaction, dashboardPayload);

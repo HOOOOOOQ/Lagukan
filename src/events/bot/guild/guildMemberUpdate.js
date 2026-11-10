@@ -1,5 +1,6 @@
 const { handleGuildMemberTagUpdate } = require("../../../functions/serverTagLogger.js");
 const { handleCrossGuildUserTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
+const { handleGuildMemberCustomRoleAccessUpdate } = require("../../../functions/customRoleSystem.js");
 
 module.exports = async (client, oldMember, newMember) => {
     const guild = newMember?.guild || oldMember?.guild;
@@ -13,6 +14,7 @@ module.exports = async (client, oldMember, newMember) => {
                   member: newMember?.roles?.add ? newMember : undefined,
               })
             : Promise.resolve(),
+        handleGuildMemberCustomRoleAccessUpdate(client, oldMember, newMember),
     ]);
 };
 
