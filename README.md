@@ -77,6 +77,7 @@ npm start
 - ☑️ Voice Channel Activity Logger (`Joined` & `Leaving` directly in active Voice Channel Text Chat) with per-guild settings (`/voicelog`)
 - ☑️ Server Tag Logger (`LAGUKAN • SERVER TAG LOGGER`) in Bahasa Indonesia with MongoDB statistics (`/setlogs`, `/ceklogs`, `/resetlogs`, `/tagstats`)
 - ☑️ Server Tag Auto Role (`LAGUKAN SERVER TAG AUTO ROLE`) — automatic per-guild role assignment & removal matched by official Discord Server Tag identity (`identity_guild_id`) with interactive dropdown panel (`/settagrole`, `/cektagrole`, `/resettagrole`, `/synctagrole`)
+- ☑️ Custom Role System (`LAGUKAN CUSTOM ROLE SYSTEM`) — modern interactive dashboard (`/customrole`) supporting custom role name, Color Picker + HEX + presets, 2/3-color & official Discord Holographic gradients with live visual PNG preview, and phone gallery attachment Role Icons (`ROLE_ICONS`)
 - ☑️ Auto-leave timeout when inactive/alone (configurable)
 
 ## `📌` Requirements
@@ -93,7 +94,7 @@ npm start
 | --- | --- |
 | General | `/help`, `/ping`, `/tagstats` |
 | Music | `/play`, `/queue`, `/skip`, `/previous`, `/pause`, `/resume`, `/stop`, `/seek`, `/remove`, `/clear`, `/shuffle`, `/loop`, `/filter`, `/volume`, `/join`, `/leave`, `/lyric` |
-| Settings | `/247`, `/autoplay`, `/voicelog`, `/setlogs`, `/ceklogs`, `/resetlogs`, `/settagrole`, `/cektagrole`, `/resettagrole`, `/synctagrole` |
+| Settings | `/247`, `/autoplay`, `/voicelog`, `/setlogs`, `/ceklogs`, `/resetlogs`, `/settagrole`, `/cektagrole`, `/resettagrole`, `/synctagrole`, `/customrole` |
 
 ### Prefix Commands (Developer / Ops)
 
