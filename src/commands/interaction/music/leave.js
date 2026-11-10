@@ -1,5 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
-const { performManualLeave } = require("../../../functions/voiceSessionManager.js");
+const { getGuildPlayer, performManualLeave } = require("../../../functions/voiceSessionManager.js");
 const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
@@ -19,7 +19,7 @@ module.exports = {
     run: async (client, interaction, player) => {
         const botName = client.config.botName || "Lagukan";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
-        const activePlayer = player || client.rainlink.players.get(interaction.guildId) || null;
+        const activePlayer = player || getGuildPlayer(client, interaction.guildId);
         const botVoiceId = activePlayer?.voiceId || interaction.guild?.members?.me?.voice?.channelId || null;
         const guildData = client.data.get(`guildData_${interaction.guildId}`);
 

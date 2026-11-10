@@ -1,6 +1,6 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
 const { convertTime } = require("../../../functions/timeFormat.js");
-const { cleanupStalePlayerIfDisconnected, clearManualDisconnect } = require("../../../functions/voiceSessionManager.js");
+const { getGuildPlayer, cleanupStalePlayerIfDisconnected, clearManualDisconnect } = require("../../../functions/voiceSessionManager.js");
 const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
@@ -54,7 +54,7 @@ module.exports = {
 
         await clearManualDisconnect(client, interaction.guildId, interaction.guild);
 
-        player = client.rainlink.players.get(interaction.guildId) || null;
+        player = getGuildPlayer(client, interaction.guildId);
         if (!player) {
             player = await client.rainlink.create({
                 guildId: interaction.guildId,
@@ -81,7 +81,9 @@ module.exports = {
         }
 
         await safeEditReply(interaction, { embeds: [embed] });
-        if (!player.playing) return player.play();
+        if (!player.playing) {
+            await player.play();
+        }
     },
 };
 

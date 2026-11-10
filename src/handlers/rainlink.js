@@ -10,7 +10,13 @@ module.exports = (client) => {
                 const event = require(`../events/rainlink/${dir}/${file}`);
                 const eventName = file.split(".")[0];
 
-                client.rainlink.on(eventName, event.bind(null, client));
+                client.rainlink.on(eventName, (...args) => {
+                    Promise.resolve()
+                        .then(() => event(client, ...args))
+                        .catch((err) => {
+                            Logger.error(`[Rainlink:${eventName}] Unhandled event error:`, err);
+                        });
+                });
             }
         });
 

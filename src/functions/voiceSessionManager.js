@@ -1,5 +1,10 @@
+const { RainlinkPlayerState } = require("rainlink");
 const { normalizeGuildData } = require("./createData.js");
 const Logger = require("../utils/logger");
+
+const PLAYER_STATE_CONNECTED = RainlinkPlayerState?.CONNECTED ?? 0;
+const PLAYER_STATE_DISCONNECTED = RainlinkPlayerState?.DISCONNECTED ?? 1;
+const PLAYER_STATE_DESTROYED = RainlinkPlayerState?.DESTROYED ?? 2;
 
 // Per-guild isolated tracking sets & timer maps
 const manualDisconnectGuilds = new Set();
@@ -82,25 +87,119 @@ function clearInactivityTimerRef(guildId, timerHandle) {
 }
 
 /**
+ * Safely retrieves the Rainlink player for `guildId` using RainlinkPlayerManager#get(guildId)
+ * (RainlinkDatabase API in rainlink ^1.2.7). Handles unavailable or already-destroyed players.
+ */
+function getGuildPlayer(client, guildId) {
+    if (!guildId || typeof client?.rainlink?.players?.get !== "function") {
+        return null;
+    }
+
+    const gId = String(guildId);
+    const player = client.rainlink.players.get(gId);
+    if (!player) return null;
+
+    if (player.state === PLAYER_STATE_DESTROYED) {
+        if (!player.sudoDestroy && typeof client.rainlink.players.delete === "function") {
+            client.rainlink.players.delete(gId);
+        }
+        return null;
+    }
+
+    if (player.sudoDestroy) {
+        return null;
+    }
+
+    return player;
+}
+
+/**
+ * Checks whether `guildId` currently has an active, non-destroyed, voice-connected Rainlink player.
+ */
+function hasActiveGuildPlayer(client, guildId) {
+    const player = getGuildPlayer(client, guildId);
+    if (!player) return false;
+
+    if (player.state === PLAYER_STATE_DISCONNECTED || !player.voiceId) {
+        return false;
+    }
+
+    return player.state === PLAYER_STATE_CONNECTED || Boolean(player.voiceId);
+}
+
+/**
+ * Cleans up any disconnected/destroyed leftover player or voice handler before Auto Reconnect
+ * calls `client.rainlink.create(...)`, since RainlinkPlayerManager#create returns `this.get(guildId)`
+ * directly if an entry still exists in `RainlinkDatabase`.
+ */
+async function prepareGuildForReconnect(client, guildId) {
+    if (!guildId || typeof client?.rainlink?.players?.get !== "function") {
+        return false;
+    }
+
+    const gId = String(guildId);
+    const existing = client.rainlink.players.get(gId);
+    if (!existing) return true;
+
+    if (
+        existing.state !== PLAYER_STATE_DESTROYED &&
+        existing.state !== PLAYER_STATE_DISCONNECTED &&
+        !existing.sudoDestroy &&
+        Boolean(existing.voiceId)
+    ) {
+        // Active connected player already present; caller should not recreate
+        return false;
+    }
+
+    try {
+        if (existing.state !== PLAYER_STATE_DESTROYED && !existing.sudoDestroy) {
+            await Promise.resolve(existing.destroy()).catch(() => {});
+        }
+    } finally {
+        if (typeof client.rainlink.players.delete === "function") {
+            client.rainlink.players.delete(gId);
+        }
+        const staleVoice = client.rainlink.voices?.get?.(gId);
+        if (staleVoice) {
+            try {
+                staleVoice.disconnect?.();
+            } catch {
+                // Ignore voice cleanup error
+            }
+            client.rainlink.voices?.delete?.(gId);
+        }
+    }
+
+    return true;
+}
+
+/**
  * Cleans up any dead/zombie Rainlink player or voice handler when the bot is no longer
  * connected to a voice channel in that guild, ensuring `/play` and `/join` never get stuck.
  */
 async function cleanupStalePlayerIfDisconnected(client, guild) {
-    if (!client?.rainlink || !guild?.id) return null;
+    if (!client?.rainlink || !guild?.id || typeof client.rainlink.players?.get !== "function") {
+        return null;
+    }
+
     const gId = String(guild.id);
-    const existingPlayer = client.rainlink.players?.get?.(gId) || null;
+    const existingPlayer = client.rainlink.players.get(gId) || null;
     if (!existingPlayer) return null;
 
     const botVoiceChannelId = guild.members?.me?.voice?.channelId;
     const isDestroyedOrDead =
-        existingPlayer.state === 2 || !existingPlayer.voiceId || (guild.members?.me?.voice && botVoiceChannelId === null);
+        existingPlayer.state === PLAYER_STATE_DESTROYED ||
+        existingPlayer.state === PLAYER_STATE_DISCONNECTED ||
+        existingPlayer.sudoDestroy ||
+        !existingPlayer.voiceId ||
+        (guild.members?.me?.voice && botVoiceChannelId === null);
 
     if (!isDestroyedOrDead) {
         return existingPlayer;
     }
 
     try {
-        if (existingPlayer.state !== 2) {
+        if (existingPlayer.state !== PLAYER_STATE_DESTROYED && !existingPlayer.sudoDestroy) {
             await Promise.resolve(existingPlayer.destroy()).catch(() => {});
         }
     } finally {
@@ -227,7 +326,7 @@ async function performManualLeave(client, guild, player = null) {
             activePlayer.playing = false;
             activePlayer.paused = true;
 
-            if (activePlayer.state !== 2) {
+            if (activePlayer.state !== PLAYER_STATE_DESTROYED) {
                 await Promise.resolve(activePlayer.destroy()).catch((err) => {
                     Logger.debug(`[VoiceSession] Catatan saat menghancurkan player (${gId}): ${err?.message || err}`);
                 });
@@ -276,6 +375,9 @@ async function performManualLeave(client, guild, player = null) {
 }
 
 module.exports = {
+    PLAYER_STATE_CONNECTED,
+    PLAYER_STATE_DISCONNECTED,
+    PLAYER_STATE_DESTROYED,
     syncGuildDisconnectMemory,
     isGuildManuallyDisconnected,
     isGuildLeavingInProgress,
@@ -285,6 +387,9 @@ module.exports = {
     cancelInactivityTimer,
     registerInactivityTimer,
     clearInactivityTimerRef,
+    getGuildPlayer,
+    hasActiveGuildPlayer,
+    prepareGuildForReconnect,
     cleanupStalePlayerIfDisconnected,
     clearManualDisconnect,
     performManualLeave,

@@ -111,7 +111,8 @@ function getBotVoiceChannelId(client, guild) {
     }
 
     const player = client.rainlink?.players?.get?.(guild?.id);
-    return player?.voiceId || null;
+    if (!player || player.state === 2 || player.sudoDestroy) return null;
+    return player.voiceId || null;
 }
 
 async function resolveGuildVoiceConfig(client, guild) {
