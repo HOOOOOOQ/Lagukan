@@ -11,6 +11,11 @@ function isUnknownMessageError(error) {
     return error.code === 10008 || error.rawError?.code === 10008 || String(error.message || "").includes("Unknown Message");
 }
 
+function isInvalidWebhookTokenError(error) {
+    if (!error) return false;
+    return error.code === 50027 || error.rawError?.code === 50027 || String(error.message || "").includes("Invalid Webhook Token");
+}
+
 function isAlreadyAcknowledgedError(error) {
     if (!error) return false;
     const text = String(error.code || error.name || error.message || "");
@@ -115,7 +120,7 @@ async function safeEditReply(interaction, payload) {
     try {
         return await interaction.editReply(editPayload);
     } catch (error) {
-        if (isUnknownInteractionError(error) || isUnknownMessageError(error)) {
+        if (isUnknownInteractionError(error) || isUnknownMessageError(error) || isInvalidWebhookTokenError(error)) {
             Logger.warn(
                 `[Interaction] Token atau pesan tidak ditemukan (${error.code || 10062}) saat editReply pada ${getCommandLabel(interaction)}.`,
             );
@@ -195,8 +200,10 @@ async function safeFollowUp(interaction, payload) {
     try {
         return await interaction.followUp(payload);
     } catch (error) {
-        if (isUnknownInteractionError(error)) {
-            Logger.warn(`[Interaction] Token kedaluwarsa (DiscordAPIError 10062) saat followUp pada ${getCommandLabel(interaction)}.`);
+        if (isUnknownInteractionError(error) || isInvalidWebhookTokenError(error)) {
+            Logger.warn(
+                `[Interaction] Token kedaluwarsa (DiscordAPIError ${error.code || 10062}) saat followUp pada ${getCommandLabel(interaction)}.`,
+            );
             return null;
         }
 
@@ -233,6 +240,7 @@ async function safeDeferUpdate(componentInteraction) {
 module.exports = {
     isUnknownInteractionError,
     isUnknownMessageError,
+    isInvalidWebhookTokenError,
     isAlreadyAcknowledgedError,
     buildSupportComponents,
     safeDeferReply,

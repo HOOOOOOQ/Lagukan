@@ -10,7 +10,7 @@ const { safeDeferReply, safeEditReply } = require("../../../functions/interactio
 
 module.exports = {
     name: "customrole-config",
-    description: "Konfigurasi sistem akses Custom Role server (Booster, Role Khusus, dan batas kepemilikan)",
+    description: "Konfigurasi channel panel otomatis & sistem akses Custom Role server (Booster, Role Khusus, batas)",
     category: "setting",
     locale: "id",
     options: [],

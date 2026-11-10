@@ -4,6 +4,7 @@ const { normalizeGuildData } = require("../../../functions/createData.js");
 const { syncGuildDisconnectMemory } = require("../../../functions/voiceSessionManager.js");
 const { initializeServerTagLogger } = require("../../../functions/serverTagLogger.js");
 const { initializeServerTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
+const { initializeCustomRolePanels } = require("../../../functions/customRoleSystem.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client) => {
@@ -60,6 +61,10 @@ module.exports = async (client) => {
 
     initializeServerTagAutoRole(client).catch((err) => {
         Logger.debug(`Server Tag Auto Role initial baseline skipped: ${err.message}`);
+    });
+
+    initializeCustomRolePanels(client).catch((err) => {
+        Logger.debug(`Custom Role Panel initial sync skipped: ${err.message}`);
     });
 
     setInterval(async () => {
