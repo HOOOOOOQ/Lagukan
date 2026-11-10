@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { cleanupStalePlayerIfDisconnected, clearManualDisconnect } = require("../../../functions/voiceSessionManager.js");
 const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
@@ -18,6 +19,8 @@ module.exports = {
     run: async (client, interaction, player) => {
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
+        player = (await cleanupStalePlayerIfDisconnected(client, interaction.guild)) || null;
+
         if (player) {
             embed.setDescription(`Already joined a voice channel.`);
 
@@ -26,6 +29,8 @@ module.exports = {
 
         const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
         if (!deferred) return;
+
+        await clearManualDisconnect(client, interaction.guildId, interaction.guild);
 
         player = await client.rainlink.create({
             guildId: interaction.guildId,

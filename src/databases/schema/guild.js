@@ -2,6 +2,7 @@ const mongoose = require("mongoose");
 
 const createGuild = mongoose.Schema({
     id: { type: String, required: true },
+    manualDisconnect: { type: Boolean, default: false },
     reconnect: {
         status: { type: Boolean, default: false },
         text: { type: String, default: null },
@@ -14,7 +15,7 @@ const createGuild = mongoose.Schema({
     },
 });
 
-module.exports = mongoose.model("guild", createGuild);
+module.exports = mongoose.models.guild || mongoose.model("guild", createGuild);
 
 /**
  * Project: Lagukan Music Bot

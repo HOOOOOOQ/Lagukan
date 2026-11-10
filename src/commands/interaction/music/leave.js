@@ -1,5 +1,6 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
-const { safeReply } = require("../../../functions/interactionResponder.js");
+const { performManualLeave } = require("../../../functions/voiceSessionManager.js");
+const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "leave",
@@ -11,16 +12,37 @@ module.exports = {
     },
     settings: {
         voice: true,
-        player: true,
+        player: false,
         current: false,
     },
     devOnly: false,
     run: async (client, interaction, player) => {
-        await Promise.resolve(player.destroy());
+        const botName = client.config.botName || "Lagukan";
+        const embed = new EmbedBuilder().setColor(client.config.embedColor);
+        const activePlayer = player || client.rainlink.players.get(interaction.guildId) || null;
+        const botVoiceId = activePlayer?.voiceId || interaction.guild?.members?.me?.voice?.channelId || null;
+        const guildData = client.data.get(`guildData_${interaction.guildId}`);
 
-        const embed = new EmbedBuilder().setColor(client.config.embedColor).setDescription(`Leaving voice channel...`);
+        if (!activePlayer && !botVoiceId && !guildData?.reconnect?.status) {
+            embed.setDescription(`There is no active player in this server.`);
 
-        return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+        }
+
+        if (botVoiceId && interaction.member?.voice?.channelId !== botVoiceId) {
+            embed.setDescription(`You need to be in the same voice channel as ${botName}.`);
+
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+        }
+
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return;
+
+        await performManualLeave(client, interaction.guild, activePlayer);
+
+        embed.setDescription(`Leaving voice channel...`);
+
+        return safeEditReply(interaction, { embeds: [embed] });
     },
 };
 

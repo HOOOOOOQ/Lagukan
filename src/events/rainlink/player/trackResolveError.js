@@ -1,26 +1,38 @@
 const { EmbedBuilder } = require("discord.js");
+const { isGuildManuallyDisconnected, isGuildLeavingInProgress } = require("../../../functions/voiceSessionManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, player, track, message) => {
-    if (!player) return;
+    if (
+        !player ||
+        player.state === 2 ||
+        player.sudoDestroy ||
+        isGuildManuallyDisconnected(client, player.guildId) ||
+        isGuildLeavingInProgress(player.guildId)
+    ) {
+        return;
+    }
 
-    const guild = await client.guilds.cache.get(player.guildId);
+    const guild = client.guilds.cache.get(player.guildId);
 
-    Logger.error(`Song error from ${guild.name} (${guild.id})`, message);
+    Logger.error(`Song error from ${guild?.name || "Unknown"} (${player.guildId})`, message);
 
-    if (player.message) player.message.delete().catch((e) => {});
+    if (player.message) {
+        player.message.delete().catch(() => {});
+        player.message = null;
+    }
 
-    const channel = await client.channels.cache.get(player.textId);
+    const channel = client.channels.cache.get(player.textId);
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
     if (!player.queue.isEmpty) {
         embed.setDescription(`Song got an error. Skipping to the next song...`);
 
-        if (channel) await channel.send({ embeds: [embed] });
+        if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
     } else {
         embed.setDescription(`Song got an error and the queue is empty. Stopping the player...`);
 
-        if (channel) await channel.send({ embeds: [embed] });
+        if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
     }
 
     return player.skip();
