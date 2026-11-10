@@ -25,6 +25,9 @@ services:
             - MONGO_URI=mongodb://mongodb:27017/lagukan
             - SUPPORT_SERVER_URL=${SUPPORT_SERVER_URL}
             - DEBUG=${DEBUG:-false}
+            # Voice Activity Logger Configuration
+            - VOICE_LOG_ENABLED=${VOICE_LOG_ENABLED:-true}
+            - TIMEZONE=${TIMEZONE:-Asia/Jakarta}
             # Lavalink Connection
             - LAVALINK_NAME=${LAVALINK_NAME:-Lagukan}
             - LAVALINK_HOST=${LAVALINK_HOST:-host.docker.internal}

@@ -15,6 +15,12 @@ module.exports = {
     mongoUri: process.env.MONGO_URI || " ", // your MongoDB Uri
     supportServerUrl: process.env.SUPPORT_SERVER_URL || " ", // your support server url
 
+    // VOICE ACTIVITY LOGGER DETAILS (Logs directly to active Voice Channel Text Chat)
+    timezone: validateTimezone(sanitizeEnvValue(process.env.TIMEZONE) || "Asia/Jakarta"),
+    voiceLog: {
+        enabled: parseBoolean(process.env.VOICE_LOG_ENABLED, true),
+    },
+
     // RAINLINK DETAILS
     lavalinkSource: process.env.LAVALINK_SOURCE || "sp", // Available Lavalink sources, based on the sources you've enabled in your Lavalink configuration. For example, if you enable the Spotify source, then "sp" will refer to "spsearch". Will be used if "sourceID" option is provided in the play command.
     rainlinkOptions: {
@@ -35,22 +41,50 @@ module.exports = {
             host: process.env.LAVALINK_HOST || "localhost",
             port: parseInt(process.env.LAVALINK_PORT) || 2333,
             auth: process.env.LAVALINK_PASSWORD || "youshallnotpass",
-            secure: parseBoolean(process.env.LAVALINK_SECURE || "false"),
+            secure: parseBoolean(process.env.LAVALINK_SECURE, false),
             driver: process.env.LAVALINK_DRIVER || "lavalink/v4/koinu", // Available drivers based on your Lavalink version: https://github.com/RainyXeon/Rainlink#-drivers
         },
     ],
 };
 
-function parseBoolean(value) {
-    if (typeof value === "string") value = value.trim().toLowerCase();
+function sanitizeEnvValue(value) {
+    if (typeof value !== "string") return "";
 
-    switch (value) {
+    return value
+        .trim()
+        .replace(/^['"]|['"]$/g, "")
+        .trim();
+}
+
+function validateTimezone(tz) {
+    try {
+        Intl.DateTimeFormat("en-GB", { timeZone: tz });
+        return tz;
+    } catch {
+        return "Asia/Jakarta";
+    }
+}
+
+function parseBoolean(value, defaultValue = false) {
+    if (value === undefined || value === null) return defaultValue;
+    if (typeof value === "boolean") return value;
+
+    const normalized = sanitizeEnvValue(String(value)).toLowerCase();
+    if (!normalized) return defaultValue;
+
+    switch (normalized) {
         case "true":
+        case "1":
+        case "yes":
+        case "on":
             return true;
         case "false":
+        case "0":
+        case "no":
+        case "off":
             return false;
         default:
-            return false;
+            return defaultValue;
     }
 }
 

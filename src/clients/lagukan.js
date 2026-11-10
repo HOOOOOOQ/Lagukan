@@ -1,6 +1,7 @@
 const { Client, Collection, GatewayIntentBits, Partials } = require("discord.js");
 const { ClusterClient, getInfo } = require("discord-hybrid-sharding");
 const { Rainlink, Library } = require("rainlink");
+const Logger = require("../utils/logger");
 
 class LagukanClient extends Client {
     constructor() {
@@ -18,7 +19,7 @@ class LagukanClient extends Client {
                 GatewayIntentBits.GuildMessages,
                 GatewayIntentBits.MessageContent,
             ],
-            partials: [Partials.Message, Partials.Channel, Partials.Reaction],
+            partials: [Partials.User, Partials.GuildMember, Partials.Message, Partials.Channel, Partials.Reaction],
         });
 
         this.config = require("../settings/config.js");
@@ -46,7 +47,19 @@ class LagukanClient extends Client {
     }
 
     async connect() {
-        return super.login(this.token);
+        try {
+            return await super.login(this.token);
+        } catch (error) {
+            if (String(error?.message || error).includes("Used disallowed intents")) {
+                Logger.error(
+                    "Disallowed Intents detected! Please enable MESSAGE CONTENT INTENT (and required intents) in Discord Developer Portal.",
+                );
+            } else {
+                Logger.error("Failed to login to Discord:", error);
+            }
+
+            throw error;
+        }
     }
 }
 

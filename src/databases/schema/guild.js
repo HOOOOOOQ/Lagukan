@@ -7,6 +7,11 @@ const createGuild = mongoose.Schema({
         text: { type: String, default: null },
         voice: { type: String, default: null },
     },
+    voiceLog: {
+        enabled: { type: Boolean, default: true },
+        timezone: { type: String, default: "Asia/Jakarta" },
+        source: { type: String, default: "env" },
+    },
 });
 
 module.exports = mongoose.model("guild", createGuild);
