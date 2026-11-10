@@ -1,25 +1,50 @@
+const { isGuildManuallyDisconnected, isGuildLeavingInProgress } = require("../../../functions/voiceSessionManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, player) => {
     if (!player) return;
 
-    const guild = await client.guilds.cache.get(player.guildId);
+    const guildId = String(player.guildId || "");
+    const guild = client.guilds.cache.get(guildId);
 
-    Logger.debug(`Player destroyed from [${guild.name}] (${guild.id})`);
+    if (guild) {
+        Logger.debug(`Player destroyed from [${guild.name}] (${guild.id})`);
+    }
 
-    if (player.message) player.message.delete().catch((e) => {});
+    if (player.message) {
+        player.message.delete().catch(() => {});
+        player.message = null;
+    }
+
+    // Never auto-reconnect if this guild was intentionally disconnected via /leave
+    if (!guild || isGuildManuallyDisconnected(client, guildId) || isGuildLeavingInProgress(guildId)) {
+        return;
+    }
 
     const guildData = client.data.get(`guildData_${guild.id}`);
 
-    if (guildData && guildData.reconnect.status) {
-        const voice = await client.channels.cache.get(guildData.reconnect.voice);
-        const text = await client.channels.cache.get(guildData.reconnect.text);
+    if (guildData && !guildData.manualDisconnect && guildData.reconnect?.status) {
+        if (client.rainlink.players.has(guild.id)) return;
+
+        const voice = client.channels.cache.get(guildData.reconnect.voice);
+        const text = client.channels.cache.get(guildData.reconnect.text);
 
         if (!voice || !text) {
             guildData.reconnect = { status: false, text: null, voice: null };
+            client.data.set(`guildData_${guild.id}`, guildData);
 
-            await guildData.save();
+            await client.guildData
+                ?.findOneAndUpdate(
+                    { id: guild.id },
+                    { $set: { reconnect: guildData.reconnect } },
+                    { upsert: true, returnDocument: "after" },
+                )
+                .catch(() => {});
 
+            return;
+        }
+
+        if (isGuildManuallyDisconnected(client, guildId) || isGuildLeavingInProgress(guildId)) {
             return;
         }
 

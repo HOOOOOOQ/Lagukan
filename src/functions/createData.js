@@ -4,13 +4,15 @@ function normalizeGuildData(client, guild, rawData = {}) {
     const envVoice = client.config?.voiceLog || { enabled: true };
     const defaultTz = client.config?.timezone || "Asia/Jakarta";
     const voiceSource = rawData.voiceLog?.source || "env";
+    const manualDisconnect = Boolean(rawData.manualDisconnect);
 
     return {
         id: rawData.id || guild?.id,
+        manualDisconnect,
         reconnect: {
-            status: Boolean(rawData.reconnect?.status),
-            text: rawData.reconnect?.text || null,
-            voice: rawData.reconnect?.voice || null,
+            status: manualDisconnect ? false : Boolean(rawData.reconnect?.status),
+            text: manualDisconnect ? null : rawData.reconnect?.text || null,
+            voice: manualDisconnect ? null : rawData.reconnect?.voice || null,
         },
         voiceLog: {
             enabled: voiceSource === "command" ? Boolean(rawData.voiceLog?.enabled) : Boolean(envVoice.enabled),
@@ -36,6 +38,7 @@ module.exports = {
                 {
                     $setOnInsert: {
                         id: guild.id,
+                        manualDisconnect: defaults.manualDisconnect,
                         reconnect: defaults.reconnect,
                         voiceLog: defaults.voiceLog,
                     },

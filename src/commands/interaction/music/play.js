@@ -1,5 +1,6 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
 const { convertTime } = require("../../../functions/timeFormat.js");
+const { cleanupStalePlayerIfDisconnected, clearManualDisconnect } = require("../../../functions/voiceSessionManager.js");
 const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
@@ -28,6 +29,8 @@ module.exports = {
         const botName = client.config.botName || "Lagukan";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
+        player = (await cleanupStalePlayerIfDisconnected(client, interaction.guild)) || null;
+
         if (player && player.voiceId !== interaction.member.voice.channelId) {
             embed.setDescription(`You must be in the same voice channel as ${botName}.`);
 
@@ -49,6 +52,9 @@ module.exports = {
             return safeEditReply(interaction, { embeds: [embed] });
         }
 
+        await clearManualDisconnect(client, interaction.guildId, interaction.guild);
+
+        player = client.rainlink.players.get(interaction.guildId) || null;
         if (!player) {
             player = await client.rainlink.create({
                 guildId: interaction.guildId,
