@@ -1,7 +1,7 @@
 {
-    "name": "lunox",
+    "name": "lagukan",
     "version": "3.1.0",
-    "description": "Lunox by @adh319",
+    "description": "Lagukan Music Bot - Shard-ready Discord music bot powered by Rainlink, Lavalink, and Discord.js v14",
     "main": "src/index.js",
     "engines": {
         "node": ">=18.0.0"
@@ -34,7 +34,8 @@
     "keywords": [
         "discord",
         "bot",
-        "lunox",
+        "lagukan",
+        "lagukan music bot",
         "music",
         "music bot",
         "discord bot",
@@ -49,16 +50,16 @@
         "lavalink discord.js music bot"
     ],
     "author": {
-        "name": "adh319",
-        "url": "https://github.com/adh319"
+        "name": "HOOOOOOQ",
+        "url": "https://github.com/HOOOOOOQ"
     },
     "license": "MIT",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/adh319/Lunox.git"
+        "url": "git+https://github.com/HOOOOOOQ/Lagukan.git"
     },
     "bugs": {
-        "url": "https://github.com/adh319/Lunox#issues"
+        "url": "https://github.com/HOOOOOOQ/Lagukan/issues"
     },
-    "homepage": "https://github.com/adh319/Lunox/#readme"
+    "homepage": "https://github.com/HOOOOOOQ/Lagukan#readme"
 }

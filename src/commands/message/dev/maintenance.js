@@ -3,7 +3,7 @@ const { EmbedBuilder } = require("discord.js");
 module.exports = {
     name: "maintenance",
     aliases: ["devmode"],
-    description: "Toggle maintenance mode",
+    description: "Toggle Lagukan maintenance mode",
     category: "dev",
     permissions: {
         bot: [],
@@ -34,10 +34,6 @@ module.exports = {
 };
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

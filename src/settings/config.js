@@ -3,6 +3,7 @@ require("dotenv").config({ path: "./.env", quiet: true });
 
 module.exports = {
     // GENERAL DETAILS
+    botName: process.env.BOT_NAME || "Lagukan", // Discord bot name
     token: process.env.TOKEN || " ", // your bot token
     prefix: process.env.PREFIX || "!", // your default prefix
     dev: [" "], // your Discord user Id & developer user Id
@@ -30,7 +31,7 @@ module.exports = {
     rainlinkPlugins: [new VoicePlugin()], // rainlink plugins, to add more plugins, just add them to the array. Available plugins: https://github.com/RainyXeon/Rainlink/#-plugins
     rainlinkNodes: [
         {
-            name: process.env.LAVALINK_NAME || "Lunox",
+            name: process.env.LAVALINK_NAME || "Lagukan",
             host: process.env.LAVALINK_HOST || "localhost",
             port: parseInt(process.env.LAVALINK_PORT) || 2333,
             auth: process.env.LAVALINK_PASSWORD || "youshallnotpass",
@@ -54,10 +55,6 @@ function parseBoolean(value) {
 }
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

@@ -1,19 +1,20 @@
-# Lunox Discord Music Bot - Docker Compose
-# Includes: Lunox Bot and MongoDB
+# Lagukan Music Bot - Docker Compose
+# Includes: Lagukan Bot and MongoDB
 # Requires: External Lavalink server (configure via LAVALINK_* env vars)
 
 services:
     # ================================
-    # Lunox Discord Bot
+    # Lagukan Discord Bot
     # ================================
-    lunox:
+    lagukan:
         build:
             context: .
             dockerfile: Dockerfile
-        container_name: lunox-bot
+        container_name: lagukan-bot
         restart: unless-stopped
         environment:
             # General Configuration
+            - BOT_NAME=${BOT_NAME:-Lagukan}
             - TOKEN=${TOKEN}
             - PREFIX=${PREFIX:-!}
             - EMBED_COLOR=${EMBED_COLOR:-5865F2}
@@ -21,11 +22,11 @@ services:
             - DEFAULT_VOLUME=${DEFAULT_VOLUME:-100}
             - MIN_VOLUME=${MIN_VOLUME:-1}
             - MAX_VOLUME=${MAX_VOLUME:-100}
-            - MONGO_URI=mongodb://mongodb:27017/lunox
+            - MONGO_URI=mongodb://mongodb:27017/lagukan
             - SUPPORT_SERVER_URL=${SUPPORT_SERVER_URL}
             - DEBUG=${DEBUG:-false}
             # Lavalink Connection
-            - LAVALINK_NAME=${LAVALINK_NAME:-Lunox}
+            - LAVALINK_NAME=${LAVALINK_NAME:-Lagukan}
             - LAVALINK_HOST=${LAVALINK_HOST:-host.docker.internal}
             - LAVALINK_PORT=${LAVALINK_PORT:-2333}
             - LAVALINK_PASSWORD=${LAVALINK_PASSWORD:-youshallnotpass}
@@ -39,19 +40,19 @@ services:
             mongodb:
                 condition: service_healthy
         networks:
-            - lunox-network
+            - lagukan-network
 
     # ================================
     # MongoDB Database
     # ================================
     mongodb:
         image: mongo:7
-        container_name: lunox-mongodb
+        container_name: lagukan-mongodb
         restart: unless-stopped
         volumes:
             - mongodb_data:/data/db
         environment:
-            - MONGO_INITDB_DATABASE=lunox
+            - MONGO_INITDB_DATABASE=lagukan
         healthcheck:
             test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
             interval: 10s
@@ -59,13 +60,13 @@ services:
             retries: 5
             start_period: 10s
         networks:
-            - lunox-network
+            - lagukan-network
 
 # ================================
 # Networks
 # ================================
 networks:
-    lunox-network:
+    lagukan-network:
         driver: bridge
 
 # ================================

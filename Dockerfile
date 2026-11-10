@@ -1,4 +1,4 @@
-# Lunox Discord Music Bot
+# Lagukan Music Bot
 # Multi-stage build for optimized production image
 
 # ================================
@@ -27,8 +27,8 @@ FROM node:20-alpine AS production
 ENV NODE_ENV=production
 
 # Create non-root user for security
-RUN addgroup -g 1001 -S lunox && \
-    adduser -S lunox -u 1001
+RUN addgroup -g 1001 -S lagukan && \
+    adduser -S lagukan -u 1001
 
 WORKDIR /app
 
@@ -36,14 +36,14 @@ WORKDIR /app
 COPY --from=dependencies /app/node_modules ./node_modules
 
 # Copy source code
-COPY --chown=lunox:lunox package*.json ./
-COPY --chown=lunox:lunox src ./src
+COPY --chown=lagukan:lagukan package*.json ./
+COPY --chown=lagukan:lagukan src ./src
 
 # Set proper permissions
-RUN chown -R lunox:lunox /app
+RUN chown -R lagukan:lagukan /app
 
 # Switch to non-root user
-USER lunox
+USER lagukan
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \

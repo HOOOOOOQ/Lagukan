@@ -5,6 +5,14 @@ const Logger = require("../../../utils/logger");
 module.exports = async (client) => {
     await emojiConfig(client);
 
+    const botName = client.config.botName || "Lagukan";
+
+    if (client.user.username !== botName) {
+        await client.user.setUsername(botName).catch((err) => {
+            Logger.debug(`Skipped updating Discord bot username to ${botName}: ${err.message}`);
+        });
+    }
+
     const guildData = await client.guildData.find();
 
     guildData.forEach(async (x) => {
@@ -33,7 +41,7 @@ module.exports = async (client) => {
         const members = results[1].reduce((acc, memberCount) => acc + memberCount, 0);
 
         const status = [
-            { type: ActivityType.Playing, name: "/play" },
+            { type: ActivityType.Playing, name: `/play | ${botName}` },
             { type: ActivityType.Listening, name: `${members} Users` },
             { type: ActivityType.Competing, name: `${servers} Servers` },
         ];
@@ -44,14 +52,10 @@ module.exports = async (client) => {
         client.user.setPresence(presenceOptions);
     }, 5000);
 
-    Logger.info(`${client.user.username} is ready with ${await client.guilds.cache.size} server`);
+    Logger.info(`${botName} Music Bot (${client.user.username}) is ready with ${await client.guilds.cache.size} server`);
 };
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

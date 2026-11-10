@@ -1,7 +1,7 @@
 const chalk = require("chalk");
 
 /**
- * Logger utility for consistent logging across the application
+ * Logger utility for consistent logging across Lagukan Music Bot
  */
 class Logger {
     /**
@@ -63,3 +63,8 @@ class Logger {
 }
 
 module.exports = Logger;
+
+/**
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
+ */

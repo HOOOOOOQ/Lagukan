@@ -9,6 +9,7 @@ module.exports = async (client, interaction) => {
     await createDataGuild(client, interaction.guild);
     await createDataUser(client, interaction.user);
 
+    const botName = client.config.botName || "Lagukan";
     const userData = client.data.get(`userData_${interaction.user.id}`);
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
     const row = new ActionRowBuilder().addComponents(
@@ -31,13 +32,13 @@ module.exports = async (client, interaction) => {
         }
 
         if (botMissingPermissions.length > 0) {
-            const content = `The bot doesn't have one of these permissions \`${botMissingPermissions.join(", ")}\`.\nPlease double check them in your server role & channel settings.`;
+            const content = `${botName} doesn't have one of these permissions \`${botMissingPermissions.join(", ")}\`.\nPlease double check them in your server role & channel settings.`;
 
             return interaction.reply({ content: content, components: [row], flags: [MessageFlags.Ephemeral] });
         }
 
         if (userData && userData.ban.status) {
-            embed.setDescription(`You have been banned from using the bot.\n\`\`\`${userData.ban.reason}\`\`\``);
+            embed.setDescription(`You have been banned from using ${botName}.\n\`\`\`${userData.ban.reason}\`\`\``);
 
             return interaction.reply({ embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral] });
         }
@@ -45,7 +46,7 @@ module.exports = async (client, interaction) => {
         const maintenance = client.data.get("maintenance");
 
         if (maintenance && !client.config.dev.includes(interaction.user.id)) {
-            embed.setDescription(`The bot is currently under maintenance. Please try again later.`);
+            embed.setDescription(`${botName} is currently under maintenance. Please try again later.`);
 
             return interaction.reply({ embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral] });
         }
@@ -57,10 +58,6 @@ module.exports = async (client, interaction) => {
 };
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

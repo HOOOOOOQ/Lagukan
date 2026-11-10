@@ -1,18 +1,16 @@
 <p align="center">
-<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&height=200&section=header&text=LUNOX&fontSize=80&fontAlignY=35&animation=twinkling&fontColor=gradient"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&height=200&section=header&text=LAGUKAN&fontSize=80&fontAlignY=35&animation=twinkling&fontColor=gradient"/>
 </p>
+
+<h1 align="center">Lagukan Music Bot</h1>
 
 <p align="center">
   Shard-ready Discord music bot powered by Rainlink, Lavalink, and Discord.js v14.
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/xhTVzbS5NU" target="_blank"> <img src="https://discordapp.com/api/guilds/1056011738950156359/widget.png?style=banner2"/> </a>
-</p>
 
-<p align="center">
-
-[![Version][version-shield]](version-url) [![MIT License][license-shield]][license-url] [![Contributors][contributors-shield]][contributors-url] [![Stargazers][stars-shield]][stars-url] [![Forks][forks-shield]][forks-url] [![Watchers][watchers-shield]][watchers-url] [![Issues][issues-shield]][issues-url] [![Node Version][node-shield]](#-requirements) [![Discord.js][discordjs-shield]](https://discord.js.org/#/docs/discord.js/main/general/welcome) [![Rainlink][rainlink-shield]](https://www.npmjs.com/package/rainlink)
+[![Version][version-shield]][version-url] [![MIT License][license-shield]][license-url] [![Contributors][contributors-shield]][contributors-url] [![Stargazers][stars-shield]][stars-url] [![Forks][forks-shield]][forks-url] [![Watchers][watchers-shield]][watchers-url] [![Issues][issues-shield]][issues-url] [![Node Version][node-shield]](#-requirements) [![Discord.js][discordjs-shield]](https://discord.js.org/#/docs/discord.js/main/general/welcome) [![Rainlink][rainlink-shield]](https://www.npmjs.com/package/rainlink)
 
 </p>
 
@@ -31,7 +29,6 @@
 - [Contributing](#-contributing)
 - [Contributors](#-contributors)
 - [Support the Project](#-support-the-project)
-- [Bots Using This Source Code](#-bots-using-this-source-code)
 - [License](#-license)
 
 ## `⚡` Quick Start
@@ -39,8 +36,8 @@
 1. Clone and install:
 
 ```bash
-git clone https://github.com/adh319/Lunox.git
-cd Lunox
+git clone https://github.com/HOOOOOOQ/Lagukan.git
+cd Lagukan
 npm install
 ```
 
@@ -59,7 +56,7 @@ Copy-Item .env.example .env
 3. Fill all required keys in `.env` (`TOKEN`, `MONGO_URI`, Lavalink connection values, etc).
 4. Add your dev ID in `src/settings/config.js`.
 5. Start MongoDB + Lavalink.
-6. Run the bot:
+6. Run **Lagukan Music Bot**:
 
 ```bash
 npm start
@@ -69,7 +66,7 @@ npm start
 
 - ☑️ Discord.js v14 + `discord-hybrid-sharding` architecture (auto shard/cluster mode)
 - ☑️ Rainlink Lavalink client with configurable drivers (`v3` / `v4`) and voice plugin enabled
-- ☑️ Full slash command music suite: play, queue, loop, filter, seek, volume, etc.
+- ☑️ Full slash command music suite: play, queue, skip, loop, filter, seek, volume, etc.
 - ☑️ Interactive now-playing controller with buttons (pause/resume, volume, loop, shuffle, previous, skip, stop)
 - ☑️ Queue pagination with button-based navigation
 - ☑️ 24/7 mode (`/247`) with reconnect persistence per guild
@@ -107,24 +104,25 @@ Create a `.env` file from `.env.example`.
 
 ### General
 
-| Key                  | Default  | Purpose                                   |
-| -------------------- | -------- | ----------------------------------------- |
-| `TOKEN`              | -        | Discord bot token                         |
-| `PREFIX`             | `!`      | Prefix for dev message commands           |
-| `EMBED_COLOR`        | `5865F2` | Embed hex color (without `#`)             |
-| `LEAVE_TIMEOUT`      | `60000`  | Inactivity timeout before leaving VC (ms) |
-| `DEFAULT_VOLUME`     | `100`    | Initial player volume                     |
-| `MIN_VOLUME`         | `1`      | Minimum volume                            |
-| `MAX_VOLUME`         | `100`    | Maximum volume                            |
-| `MONGO_URI`          | -        | MongoDB connection string                 |
-| `SUPPORT_SERVER_URL` | -        | Support button URL                        |
-| `DEBUG`              | `false`  | Enable debug logs when `true`             |
+| Key                  | Default   | Purpose                                   |
+| -------------------- | --------- | ----------------------------------------- |
+| `BOT_NAME`           | `Lagukan` | Discord bot name                          |
+| `TOKEN`              | -         | Discord bot token                         |
+| `PREFIX`             | `!`       | Prefix for dev message commands           |
+| `EMBED_COLOR`        | `5865F2`  | Embed hex color (without `#`)             |
+| `LEAVE_TIMEOUT`      | `60000`   | Inactivity timeout before leaving VC (ms) |
+| `DEFAULT_VOLUME`     | `100`     | Initial player volume                     |
+| `MIN_VOLUME`         | `1`       | Minimum volume                            |
+| `MAX_VOLUME`         | `100`     | Maximum volume                            |
+| `MONGO_URI`          | -         | MongoDB connection string                 |
+| `SUPPORT_SERVER_URL` | -         | Support button URL                        |
+| `DEBUG`              | `false`   | Enable debug logs when `true`             |
 
 ### Lavalink Connection
 
 | Key                 | Default             | Purpose                                   |
 | ------------------- | ------------------- | ----------------------------------------- |
-| `LAVALINK_NAME`     | `Lunox`             | Node name                                 |
+| `LAVALINK_NAME`     | `Lagukan`           | Node name                                 |
 | `LAVALINK_HOST`     | `localhost`         | Lavalink host                             |
 | `LAVALINK_PORT`     | `2333`              | Lavalink port                             |
 | `LAVALINK_PASSWORD` | `youshallnotpass`   | Lavalink password                         |
@@ -181,8 +179,8 @@ Examples:
 1. Clone repository:
 
 ```bash
-git clone https://github.com/adh319/Lunox.git
-cd Lunox
+git clone https://github.com/HOOOOOOQ/Lagukan.git
+cd Lagukan
 ```
 
 2. Install dependencies:
@@ -206,7 +204,7 @@ Copy-Item .env.example .env
 4. Fill all required keys in `.env`
 5. Configure developer IDs in `src/settings/config.js`
 6. Start Lavalink + MongoDB
-7. Start the bot:
+7. Start **Lagukan Music Bot**:
 
 ```bash
 npm start
@@ -216,8 +214,8 @@ npm start
 
 This repository includes:
 
-- `Dockerfile` for the bot image
-- `docker-compose.yml` for bot + MongoDB
+- `Dockerfile` for the Lagukan bot image
+- `docker-compose.yml` for Lagukan bot + MongoDB
 
 ### Important
 
@@ -238,7 +236,7 @@ docker compose down
 
 ## `🔐` Permissions Needed
 
-At minimum, ensure the bot can:
+At minimum, ensure **Lagukan** can:
 
 - `ViewChannel`
 - `SendMessages`
@@ -263,34 +261,16 @@ For stage channels, also allow:
 
 ## 💖 Support the Project
 
-If you find Lunox useful, consider supporting continued development:
+If you find **Lagukan Music Bot** useful, consider starring the repository and supporting continued development:
 
 <p align="center">
-  <a href="https://github.com/sponsors/adh319">
+  <a href="https://github.com/HOOOOOOQ/Lagukan">
+    <img src="https://img.shields.io/badge/GitHub-Star_Repository-181717?style=for-the-badge&logo=github" alt="Star Repository"/>
+  </a>
+  <a href="https://github.com/sponsors/HOOOOOOQ">
     <img src="https://img.shields.io/badge/GitHub_Sponsors-Support-ea4aaa?style=for-the-badge&logo=github-sponsors" alt="GitHub Sponsors"/>
   </a>
-  <a href="https://paypal.me/LunoxBot">
-    <img src="https://img.shields.io/badge/PayPal-Donate-00457C?style=for-the-badge&logo=paypal" alt="PayPal"/>
-  </a>
-  <a href="https://ko-fi.com/lunoxbot">
-    <img src="https://img.shields.io/badge/Ko--fi-Support-FF5E5B?style=for-the-badge&logo=ko-fi" alt="Ko-fi"/>
-  </a>
 </p>
-
-- **GitHub Sponsors** — [https://github.com/sponsors/adh319](https://github.com/sponsors/adh319)
-- **PayPal** — [https://paypal.me/LunoxBot](https://paypal.me/LunoxBot)
-- **Ko-fi** — [https://ko-fi.com/lunoxbot](https://ko-fi.com/lunoxbot)
-
-## `🤖` Bots Using This Source Code
-
-If you're using this source code and want your bot listed below, submit a pull request by editing the table with your details:
-
-| No. | Bot Name | Invite Link | Support Server |
-| --- | --- | --- | --- |
-| `1` | Jive | [Invite Link](https://discord.com/oauth2/authorize?client_id=1019954630551158934) | [Jive Corner](https://discord.gg/kNdSkHchzH) |
-| `2` | Xyvo | [Invite Link](https://discord.com/api/oauth2/authorize?client_id=1448697407973097522&permissions=8&scope=bot%20applications.commands) | [Xyvo](https://discord.gg/vGjcnBjVyY) |
-| `3` |  |  |  |
-| `4` |  |  |  |
 
 ## `🤝` Contributing
 
@@ -302,44 +282,39 @@ Contributions are welcome.
 
 ## `👥` Contributors
 
-<a href="https://github.com/adh319/Lunox/graphs/contributors">
-  <img src="https://contributors-img.web.app/image?repo=adh319/Lunox" />
+<a href="https://github.com/HOOOOOOQ/Lagukan/graphs/contributors">
+  <img src="https://contributors-img.web.app/image?repo=HOOOOOOQ/Lagukan" />
 </a>
 
 ## `🔐` License
 
-This project is licensed under the [MIT License](https://github.com/adh319/Lunox/blob/main/LICENSE).
+This project is licensed under the [MIT License](https://github.com/HOOOOOOQ/Lagukan/blob/main/LICENSE).
 
-You are free to use and modify the code, but include attribution to the original repository:
-
-```text
-© 2024 adh319@github. This project is available under the MIT License.
-You must include proper attribution by linking to: https://github.com/adh319/Lunox
-```
 ---
+
 <p align="center">
-  <b>Made by adh319</b><br/>
-  <sub>Lunox Discord Music Bot • Built for Excellence</sub>
+  <b>Lagukan Music Bot</b><br/>
+  <sub>Lagukan Music Bot • Built for Excellence</sub>
 </p>
 
 <p align="center">
 <img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&height=100&section=footer"/>
 </p>
 
-[version-shield]: https://img.shields.io/github/package-json/v/adh319/Lunox?style=for-the-badge
-[contributors-shield]: https://img.shields.io/github/contributors/adh319/Lunox.svg?style=for-the-badge
-[contributors-url]: https://github.com/adh319/Lunox/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/adh319/Lunox.svg?style=for-the-badge
-[forks-url]: https://github.com/adh319/Lunox/network/members
-[watchers-shield]: https://img.shields.io/github/watchers/adh319/Lunox?style=for-the-badge
-[watchers-url]: https://github.com/adh319/Lunox
-[stars-shield]: https://img.shields.io/github/stars/adh319/Lunox.svg?style=for-the-badge
-[stars-url]: https://github.com/adh319/Lunox/stargazers
-[issues-shield]: https://img.shields.io/github/issues/adh319/Lunox.svg?style=for-the-badge
-[issues-url]: https://github.com/adh319/Lunox/issues
-[license-shield]: https://img.shields.io/github/license/adh319/Lunox.svg?style=for-the-badge
-[license-url]: https://github.com/adh319/Lunox/blob/main/LICENSE
-[version-url]: https://github.com/adh319/Lunox/blob/main/package.json
+[version-shield]: https://img.shields.io/github/package-json/v/HOOOOOOQ/Lagukan?style=for-the-badge
+[contributors-shield]: https://img.shields.io/github/contributors/HOOOOOOQ/Lagukan.svg?style=for-the-badge
+[contributors-url]: https://github.com/HOOOOOOQ/Lagukan/graphs/contributors
+[forks-shield]: https://img.shields.io/github/forks/HOOOOOOQ/Lagukan.svg?style=for-the-badge
+[forks-url]: https://github.com/HOOOOOOQ/Lagukan/network/members
+[watchers-shield]: https://img.shields.io/github/watchers/HOOOOOOQ/Lagukan?style=for-the-badge
+[watchers-url]: https://github.com/HOOOOOOQ/Lagukan
+[stars-shield]: https://img.shields.io/github/stars/HOOOOOOQ/Lagukan.svg?style=for-the-badge
+[stars-url]: https://github.com/HOOOOOOQ/Lagukan/stargazers
+[issues-shield]: https://img.shields.io/github/issues/HOOOOOOQ/Lagukan.svg?style=for-the-badge
+[issues-url]: https://github.com/HOOOOOOQ/Lagukan/issues
+[license-shield]: https://img.shields.io/github/license/HOOOOOOQ/Lagukan.svg?style=for-the-badge
+[license-url]: https://github.com/HOOOOOOQ/Lagukan/blob/main/LICENSE
+[version-url]: https://github.com/HOOOOOOQ/Lagukan/blob/main/package.json
 [node-shield]: https://img.shields.io/badge/Node-18%2B-43853d?logo=node.js&logoColor=white&style=for-the-badge
 [discordjs-shield]: https://img.shields.io/badge/discord.js-v14-5865F2?logo=discord&logoColor=white&style=for-the-badge
 [rainlink-shield]: https://img.shields.io/badge/Lavalink%20Client-Rainlink-00bcd4?style=for-the-badge

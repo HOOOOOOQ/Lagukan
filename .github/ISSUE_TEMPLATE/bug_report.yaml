@@ -1,9 +1,9 @@
 name: Bug Report
-description: Report incorrect or unexpected behavior.
+description: Report incorrect or unexpected behavior in Lagukan Music Bot.
 title: "[Bug]: "
 labels: ["bug"]
 assignees:
-    - adh319
+    - HOOOOOOQ
 body:
     - type: markdown
       attributes:
@@ -31,9 +31,9 @@ body:
       validations:
           required: true
     - type: input
-      id: php-version
+      id: nodejs-version
       attributes:
-          label: "Nodejs version"
+          label: "Node.js version"
       validations:
           required: true
     - type: textarea

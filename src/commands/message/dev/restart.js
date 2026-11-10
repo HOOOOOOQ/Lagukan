@@ -3,7 +3,7 @@ const { EmbedBuilder } = require("discord.js");
 module.exports = {
     name: "restart",
     aliases: ["reboot"],
-    description: "Restart the bot process",
+    description: "Restart Lagukan bot process",
     category: "dev",
     permissions: {
         bot: [],
@@ -16,9 +16,10 @@ module.exports = {
     },
     devOnly: true,
     run: async (client, message, player, args) => {
+        const botName = client.config.botName || "Lagukan";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
-        embed.setDescription("🔄 Restarting bot...");
+        embed.setDescription(`🔄 Restarting ${botName}...`);
 
         await message.reply({ embeds: [embed] });
 
@@ -27,10 +28,6 @@ module.exports = {
 };
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

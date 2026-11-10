@@ -2,7 +2,7 @@ const { EmbedBuilder, MessageFlags } = require("discord.js");
 
 module.exports = {
     name: "skip",
-    description: "Skip the current song",
+    description: "Skip the current song in Lagukan player",
     category: "music",
     permissions: {
         bot: [],
@@ -32,10 +32,6 @@ module.exports = {
 };
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */

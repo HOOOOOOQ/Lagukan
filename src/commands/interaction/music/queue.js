@@ -1,10 +1,11 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
 const { createPage } = require("../../../functions/createPage.js");
 const { convertTime } = require("../../../functions/timeFormat.js");
+const lodash = require("lodash");
 
 module.exports = {
     name: "queue",
-    description: "Show the queue list",
+    description: "Show the Lagukan queue list",
     category: "music",
     permissions: {
         bot: [],
@@ -17,6 +18,7 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
+        const botName = client.config.botName || "Lagukan";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
         const formatString = (str, maxLength) => (str.length > maxLength ? str.substr(0, maxLength - 3) + "..." : str);
 
@@ -36,11 +38,11 @@ module.exports = {
         });
 
         embed
-            .setAuthor({ name: "Queue List", iconURL: client.user.displayAvatarURL() })
+            .setAuthor({ name: `${botName} Queue List`, iconURL: client.user.displayAvatarURL() })
             .setColor(client.config.embedColor)
             .setThumbnail(interaction.guild.iconURL())
             .setFooter({
-                text: `Total Songs: ${player.queue.size}  •  Total Duration: ${convertTime(player.queue.duration)}`,
+                text: `${botName} Music Bot  •  Total Songs: ${player.queue.size}  •  Total Duration: ${convertTime(player.queue.duration)}`,
                 iconURL: client.user.displayAvatarURL(),
             });
 
@@ -51,10 +53,6 @@ module.exports = {
 };
 
 /**
- * Project: Lunox
- * Author: adh319
- * Company: EnourDev
- * This code is the property of EnourDev and may not be reproduced or
- * modified without permission. For more information, contact us at
- * https://discord.gg/xhTVzbS5NU
+ * Project: Lagukan Music Bot
+ * Repository: https://github.com/HOOOOOOQ/Lagukan
  */
