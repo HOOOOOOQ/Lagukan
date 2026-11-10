@@ -7,6 +7,7 @@ const {
     getBotVoiceChannelId,
     resolveGuildVoiceConfig,
 } = require("../../../functions/voiceLogger.js");
+const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "voicelog",
@@ -42,7 +43,8 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction) => {
-        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return;
 
         const guild = interaction.guild;
         const statusOpt = interaction.options.getString("status");
@@ -60,7 +62,7 @@ module.exports = {
                 )
                 .setFooter({ text: "LAGUKAN VOICE SYSTEM", iconURL: botIconUrl });
 
-            return interaction.editReply({ embeds: [errEmbed] });
+            return safeEditReply(interaction, { embeds: [errEmbed] });
         }
 
         const hasChanges = Boolean(statusOpt || timezoneOpt);
@@ -88,7 +90,7 @@ module.exports = {
             client.data.set(`guildData_${guild.id}`, guildData);
 
             await client.guildData
-                .findOneAndUpdate({ id: guild.id }, { $set: { voiceLog: guildData.voiceLog } }, { upsert: true, returnDocument: "after" })
+                ?.findOneAndUpdate({ id: guild.id }, { $set: { voiceLog: guildData.voiceLog } }, { upsert: true, returnDocument: "after" })
                 .catch(() => {});
         }
 
@@ -114,7 +116,7 @@ module.exports = {
             .setFooter({ text: "LAGUKAN VOICE SYSTEM", iconURL: botIconUrl })
             .setTimestamp();
 
-        return interaction.editReply({ embeds: [embed] });
+        return safeEditReply(interaction, { embeds: [embed] });
     },
 };
 

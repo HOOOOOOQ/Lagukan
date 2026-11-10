@@ -1,6 +1,7 @@
-const { EmbedBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
 const { find } = require("llyrics");
 const gsearch = require("google-search-url");
+const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "lyric",
@@ -17,10 +18,13 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
+        const deferred = await safeDeferReply(interaction);
+        if (!deferred) return;
+
         const botName = client.config.botName || "Lagukan";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
         const formatText = (text) =>
-            text
+            String(text || "")
                 .replace(/\(.*?\)/gi, "")
                 .replace(/\s/g, "-")
                 .replace(/['",]/g, "")
@@ -31,17 +35,10 @@ module.exports = {
         const trackTitle = formatText(track.title);
         const trackArtist = formatText(track.author);
         const lyricText = await lyricFind(trackTitle, trackArtist);
-        const loadingEmbed = new EmbedBuilder().setColor(client.config.embedColor).setDescription(`Please wait...!`);
-        const loadingMsg = await interaction.reply({ embeds: [loadingEmbed] });
 
         if (!lyricText) {
             embed.setDescription(`No lyrics found. Please try again later.`);
-
-            if (loadingMsg) {
-                return loadingMsg.edit({ embeds: [embed] });
-            } else {
-                return interaction.reply({ embeds: [embed] });
-            }
+            return safeEditReply(interaction, { embeds: [embed] });
         }
 
         if (lyricText.length <= 4096) {
@@ -53,44 +50,38 @@ module.exports = {
                 .setThumbnail(track.artworkUrl)
                 .setDescription(lyricText);
 
-            if (loadingMsg) {
-                return loadingMsg.edit({ embeds: [embed] });
-            } else {
-                return interaction.reply({ embeds: [embed] });
-            }
-        } else {
-            embed
-                .setAuthor({
-                    name: `${botName} Lyrics`,
-                    iconURL: client.user.displayAvatarURL(),
-                })
-                .setThumbnail(track.artworkUrl)
-                .setDescription(lyricText.substring(0, 4096));
-
-            const lyricUrl = gsearch.craft({ query: `${trackTitle} ${trackArtist} lyrics` }).url;
-            const lyricButton = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setURL(lyricUrl.replace("http:", "https:")).setLabel("Full Lyrics").setStyle(ButtonStyle.Link),
-            );
-
-            if (loadingMsg) {
-                return loadingMsg.edit({ embeds: [embed], components: [lyricButton] });
-            } else {
-                return interaction.editReply({ embeds: [embed], components: [lyricButton] });
-            }
+            return safeEditReply(interaction, { embeds: [embed] });
         }
+
+        embed
+            .setAuthor({
+                name: `${botName} Lyrics`,
+                iconURL: client.user.displayAvatarURL(),
+            })
+            .setThumbnail(track.artworkUrl)
+            .setDescription(lyricText.substring(0, 4096));
+
+        const lyricUrl = gsearch.craft({ query: `${trackTitle} ${trackArtist} lyrics` }).url;
+        const lyricButton = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setURL(lyricUrl.replace("http:", "https:")).setLabel("Full Lyrics").setStyle(ButtonStyle.Link),
+        );
+
+        return safeEditReply(interaction, { embeds: [embed], components: [lyricButton] });
     },
 };
 
 async function lyricFind(title, author) {
-    const response = await find({
-        song: title,
-        artist: author,
-        engine: "youtube",
-        forceSearch: true,
-    });
-    const lyricSong = response.lyrics;
-
-    return lyricSong;
+    try {
+        const response = await find({
+            song: title,
+            artist: author,
+            engine: "youtube",
+            forceSearch: true,
+        });
+        return response?.lyrics || null;
+    } catch {
+        return null;
+    }
 }
 
 /**

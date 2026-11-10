@@ -1,8 +1,12 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags } = require("discord.js");
 const { convertTime } = require("../../../functions/timeFormat.js");
+const { safeReply, safeDeferUpdate } = require("../../../functions/interactionResponder.js");
 
 module.exports = async (client, player, track) => {
     if (!player) return;
+
+    const textChannel = client.channels.cache.get(player.textId);
+    if (!textChannel?.send) return;
 
     const botName = client.config.botName || "Lagukan";
     const formatString = (str, maxLength) => (str.length > maxLength ? str.substr(0, maxLength - 3) + "..." : str);
@@ -20,7 +24,7 @@ module.exports = async (client, player, track) => {
         .setThumbnail(track.artworkUrl)
         .setDescription(`**[${trackTitle} - ${trackAuthor}](${track.uri})**`)
         .setFields(
-            { name: "Source", value: `${capitalize(track.source)}`, inline: true },
+            { name: "Source", value: `${capitalize(track.source || "music")}`, inline: true },
             { name: "Duration", value: `\`${trackDuration}\``, inline: true },
             { name: "Requested by", value: `${track.requester}`, inline: true },
         )
@@ -43,7 +47,9 @@ module.exports = async (client, player, track) => {
         new ButtonBuilder().setCustomId("stop").setEmoji(playerEmoji.stop).setStyle(ButtonStyle.Danger),
     );
 
-    const nplaying = await client.channels.cache.get(player.textId).send({ embeds: [trackMsg], components: [button, button2] });
+    const nplaying = await textChannel.send({ embeds: [trackMsg], components: [button, button2] }).catch(() => null);
+    if (!nplaying) return;
+
     player.message = nplaying;
 
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
@@ -52,127 +58,128 @@ module.exports = async (client, player, track) => {
     collector.on("collect", async (message) => {
         if (!player) return collector.stop();
 
-        // Prevent user from using buttons if they are not in the same voice channel
-        if (!message.member.voice.channel || player.voiceId !== message.member.voice.channelId) {
+        if (!message.member?.voice?.channel || player.voiceId !== message.member.voice.channelId) {
             embed.setDescription(`You must be in the same voice channel as ${botName}.`);
 
-            return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        // Prevent user from using buttons if they are not the requester
-        if (message.user.id !== track.requester.id) {
+        if (message.user.id !== track.requester?.id) {
             embed.setDescription(`Only the requester can use this button.`);
 
-            return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         switch (message.customId) {
-            case "pause":
-                if (!player.paused) {
-                    message.deferUpdate();
+            case "pause": {
+                const ack = await safeDeferUpdate(message);
+                if (!ack) return;
 
+                if (!player.paused) {
                     player.pause();
 
                     button.components[0].setEmoji(playerEmoji.resume).setStyle(ButtonStyle.Primary);
                     trackMsg.setAuthor({ name: `${botName} • Song Paused`, iconURL: client.user.displayAvatarURL() });
                 } else {
-                    message.deferUpdate();
-
                     player.resume();
 
                     button.components[0].setEmoji(playerEmoji.pause).setStyle(ButtonStyle.Secondary);
                     trackMsg.setAuthor({ name: `${botName} • Now Playing`, iconURL: client.user.displayAvatarURL() });
                 }
 
-                await nplaying.edit({ embeds: [trackMsg], components: [button, button2] });
+                await nplaying.edit({ embeds: [trackMsg], components: [button, button2] }).catch(() => {});
                 break;
-            case "prev":
-                if (!player.queue.previous.length) {
+            }
+            case "prev": {
+                if (!player.queue.previous?.length) {
                     embed.setDescription(`Previous song not found.`);
 
-                    return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                    return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
                 }
 
-                message.deferUpdate();
+                const ack = await safeDeferUpdate(message);
+                if (!ack) return;
 
                 player.previous();
                 break;
-            case "skip":
+            }
+            case "skip": {
                 if (player.queue.isEmpty && !client.data.get("autoplay", player.guildId)) {
                     embed.setDescription(`Queue is empty. Skip not possible.`);
 
-                    return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                    return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
                 }
 
-                message.deferUpdate();
+                const ack = await safeDeferUpdate(message);
+                if (!ack) return;
 
                 player.skip();
                 break;
-            case "loop":
+            }
+            case "loop": {
                 switch (player.loop) {
                     case "none":
                         embed.setDescription(`Loop mode has been set to \`song\`.`);
-
                         player.setLoop("song");
                         break;
                     case "song":
                         embed.setDescription(`Loop mode has been set to \`queue\`.`);
-
                         player.setLoop("queue");
                         break;
                     case "queue":
                         embed.setDescription(`Loop mode has been set to \`off\`.`);
-
                         player.setLoop("none");
                         break;
                 }
 
-                return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-            case "shuffle":
+                return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
+            }
+            case "shuffle": {
                 if (player.queue.isEmpty) {
                     embed.setDescription(`Queue is empty. Shuffle not possible.`);
 
-                    return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                    return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
                 }
 
                 player.queue.shuffle();
 
                 embed.setDescription(`Queue has been shuffled.`);
 
-                return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-            case "voldown":
+                return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
+            }
+            case "voldown": {
                 if (player.volume <= client.config.minVolume) {
                     embed.setDescription(`Volume cannot be set below \`${client.config.minVolume}%\`.`);
 
-                    return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                    return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
                 }
 
                 const volumeDown = player.volume - 10;
-
                 player.setVolume(volumeDown);
-
                 embed.setDescription(`Volume has been set to \`${volumeDown}%\`.`);
 
-                return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-            case "volup":
+                return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
+            }
+            case "volup": {
                 if (player.volume >= client.config.maxVolume) {
                     embed.setDescription(`Volume cannot be set above \`${client.config.maxVolume}%\`.`);
 
-                    return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                    return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
                 }
 
                 const volumeUp = player.volume + 10;
-
                 player.setVolume(volumeUp);
-
                 embed.setDescription(`Volume has been set to \`${volumeUp}%\`.`);
 
-                return message.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-            case "stop":
-                message.deferUpdate();
+                return safeReply(message, { embeds: [embed], flags: MessageFlags.Ephemeral });
+            }
+            case "stop": {
+                const ack = await safeDeferUpdate(message);
+                if (!ack) return;
 
                 player.stop();
                 break;
+            }
         }
     });
 };

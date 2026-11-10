@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "stop",
@@ -15,11 +16,11 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
-        player.stop();
+        await Promise.resolve(player.stop());
 
         const embed = new EmbedBuilder().setColor(client.config.embedColor).setDescription(`Stopped the music player.`);
 
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     },
 };
 

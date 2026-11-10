@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "skip",
@@ -20,14 +21,14 @@ module.exports = {
         if (player.queue.isEmpty && !client.data.get("autoplay", player.guildId)) {
             embed.setDescription(`Queue is empty. Skip not possible.`);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        player.skip();
+        await Promise.resolve(player.skip());
 
         embed.setDescription(`Skipped the current song.`);
 
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     },
 };
 

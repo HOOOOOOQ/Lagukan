@@ -1,16 +1,24 @@
 const { readdirSync } = require("fs");
+const path = require("path");
 const Logger = require("../utils/logger");
 
 module.exports = (client) => {
     try {
-        readdirSync("./src/events/bot/").forEach((dir) => {
-            const bots = readdirSync(`./src/events/bot/${dir}`).filter((file) => file.endsWith(".js"));
+        const eventsRoot = path.join(__dirname, "../events/bot");
+
+        readdirSync(eventsRoot).forEach((dir) => {
+            const dirPath = path.join(eventsRoot, dir);
+            const bots = readdirSync(dirPath).filter((file) => file.endsWith(".js"));
 
             for (const file of bots) {
-                const event = require(`../events/bot/${dir}/${file}`);
+                const event = require(path.join(dirPath, file));
                 const eventName = file.split(".")[0];
 
-                client.on(eventName, event.bind(null, client));
+                client.on(eventName, (...args) => {
+                    Promise.resolve(event(client, ...args)).catch((err) => {
+                        Logger.error(`Unhandled error in bot event '${eventName}':`, err);
+                    });
+                });
             }
         });
 

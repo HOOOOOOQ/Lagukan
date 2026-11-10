@@ -1,7 +1,8 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
+const { EmbedBuilder } = require("discord.js");
 const { createDataGuild, createDataUser } = require("../../../functions/createData.js");
 const { permissions } = require("../../../functions/getPermission.js");
 const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
+const { buildSupportComponents } = require("../../../functions/interactionResponder.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, message) => {
@@ -14,23 +15,27 @@ module.exports = async (client, message) => {
     const botName = client.config.botName || "Lagukan";
     const userData = client.data.get(`userData_${message.author.id}`);
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setLabel("Support Server").setURL(client.config.supportServerUrl).setStyle(ButtonStyle.Link),
-    );
+    const supportComponents = buildSupportComponents(client, "Support Server");
 
-    const botPermissions = ["ViewChannel", "SendMessages", "EmbedLinks"];
-    const botMissingPermissions = [];
+    if (message.channel?.permissionsFor && message.guild.members?.me) {
+        const botPermissions = ["ViewChannel", "SendMessages", "EmbedLinks"];
+        const botMissingPermissions = [];
 
-    for (const perm of botPermissions) {
-        if (!message.channel.permissionsFor(message.guild.members.me).has(perm)) botMissingPermissions.push(perm);
-    }
+        for (const perm of botPermissions) {
+            if (!message.channel.permissionsFor(message.guild.members.me)?.has(perm)) botMissingPermissions.push(perm);
+        }
 
-    if (botMissingPermissions.length > 0) {
-        const content = `${botName} doesn't have one of these permissions \`${botMissingPermissions.join(", ")}\`.\nPlease double check them in your server role & channel settings.`;
+        if (botMissingPermissions.length > 0) {
+            const content = `${botName} doesn't have one of these permissions \`${botMissingPermissions.join(", ")}\`.\nPlease double check them in your server role & channel settings.`;
 
-        const dmChannel = message.author.dmChannel == null ? await message.author.createDM() : message.author.dmChannel;
+            const dmChannel =
+                message.author.dmChannel == null ? await message.author.createDM().catch(() => null) : message.author.dmChannel;
 
-        return dmChannel.send({ content: content, components: [row] });
+            if (dmChannel) {
+                await dmChannel.send({ content, components: supportComponents }).catch(() => {});
+            }
+            return;
+        }
     }
 
     const mention = new RegExp(`^<@!?${client.user.id}>( |)$`);
@@ -38,7 +43,7 @@ module.exports = async (client, message) => {
     if (message.content.match(mention)) {
         embed.setDescription(`Hello! I'm **${botName} Music Bot**. Use \`/help\` command to get list of commands.`);
 
-        message.reply({ embeds: [embed] });
+        await message.reply({ embeds: [embed] }).catch(() => {});
     }
 
     let prefix = client.config.prefix;
@@ -69,10 +74,10 @@ module.exports = async (client, message) => {
         `[PREFIX] [${command.name}] | (${message.author.username})[${message.author.id}] | (${message.guild.name})[${message.guildId}]`,
     );
 
-    if (userData && userData.ban.status) {
+    if (userData && userData.ban?.status) {
         embed.setDescription(`You have been banned from using ${botName}.\n\`\`\`${userData.ban.reason}\`\`\``);
 
-        return message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] }).catch(() => {});
     }
 
     const maintenance = client.data.get("maintenance");
@@ -80,12 +85,10 @@ module.exports = async (client, message) => {
     if (maintenance && !client.config.dev.includes(message.author.id)) {
         embed.setDescription(`${botName} is currently under maintenance. Please try again later.`);
 
-        return message.reply({ embeds: [embed] });
+        return message.reply({ embeds: [embed] }).catch(() => {});
     }
 
-    let player = client.rainlink.players.get(message.guildId);
-
-    return permissions(client, message, command, embed, player, args);
+    return permissions(client, message, command, args);
 };
 
 /**

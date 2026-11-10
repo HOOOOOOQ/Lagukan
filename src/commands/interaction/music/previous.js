@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "previous",
@@ -16,18 +17,19 @@ module.exports = {
     devOnly: false,
     run: async (client, interaction, player) => {
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
+        const hasPrevious = Array.isArray(player.queue.previous) ? player.queue.previous.length > 0 : Boolean(player.queue.previous);
 
-        if (!player.queue.previous) {
+        if (!hasPrevious) {
             embed.setDescription(`Previous song not found.`);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        player.previous();
+        await Promise.resolve(player.previous());
 
         embed.setDescription(`Playing the previous song.`);
 
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     },
 };
 

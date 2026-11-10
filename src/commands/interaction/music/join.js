@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "join",
@@ -20,21 +21,24 @@ module.exports = {
         if (player) {
             embed.setDescription(`Already joined a voice channel.`);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-        } else {
-            player = await client.rainlink.create({
-                guildId: interaction.guildId,
-                textId: interaction.channelId,
-                voiceId: interaction.member.voice.channelId,
-                shardId: interaction.guild.shardId,
-                volume: client.config.defaultVolume,
-                deaf: true,
-            });
-
-            embed.setDescription(`Joined ${interaction.member.voice.channel}.`);
-
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
+
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return;
+
+        player = await client.rainlink.create({
+            guildId: interaction.guildId,
+            textId: interaction.channelId,
+            voiceId: interaction.member.voice.channelId,
+            shardId: interaction.guild.shardId,
+            volume: client.config.defaultVolume,
+            deaf: true,
+        });
+
+        embed.setDescription(`Joined ${interaction.member.voice.channel}.`);
+
+        return safeEditReply(interaction, { embeds: [embed] });
     },
 };
 

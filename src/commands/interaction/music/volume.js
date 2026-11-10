@@ -1,5 +1,6 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
 const { minVolume, maxVolume } = require("../../../settings/config.js");
+const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "volume",
@@ -32,14 +33,17 @@ module.exports = {
         if (!value) {
             embed.setDescription(`Current volume: \`${player.volume}%\``);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        player.setVolume(value);
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return;
+
+        await Promise.resolve(player.setVolume(value));
 
         embed.setDescription(`Volume has been set to: \`${value}%\``);
 
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return safeEditReply(interaction, { embeds: [embed] });
     },
 };
 

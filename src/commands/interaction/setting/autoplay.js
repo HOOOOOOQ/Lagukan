@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "autoplay",
@@ -23,7 +24,7 @@ module.exports = {
                 `${player.queue.isEmpty ? "The current song platform is not supported" : "The last queue platform is not supported"}. Autoplay mode can only be used with YouTube.`,
             );
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         const autoplay = client.data.get("autoplay", player.guildId);
@@ -38,7 +39,7 @@ module.exports = {
             embed.setDescription(`Autoplay mode is now \`enabled\``);
         }
 
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     },
 };
 

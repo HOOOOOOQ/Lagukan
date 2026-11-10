@@ -1,5 +1,6 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
 const { convertTime } = require("../../../functions/timeFormat.js");
+const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "play",
@@ -30,17 +31,22 @@ module.exports = {
         if (player && player.voiceId !== interaction.member.voice.channelId) {
             embed.setDescription(`You must be in the same voice channel as ${botName}.`);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        const query = interaction.options.getString("query");
-        const msg = await interaction.reply({ embeds: [embed.setDescription(`Searching for \`${query}\``)] });
-        const result = await client.rainlink.search(query, { requester: interaction.member, sourceID: client.config.lavalinkSource });
+        const deferred = await safeDeferReply(interaction);
+        if (!deferred) return;
 
-        if (result.type === "EMPTY" || result.type === "ERROR" || !result.tracks.length) {
+        const query = interaction.options.getString("query");
+        const result = await client.rainlink.search(query, {
+            requester: interaction.member,
+            sourceID: client.config.lavalinkSource,
+        });
+
+        if (!result || result.type === "EMPTY" || result.type === "ERROR" || !result.tracks?.length) {
             embed.setDescription(`No results found for your query.`);
 
-            if (msg) return msg.edit({ embeds: [embed] });
+            return safeEditReply(interaction, { embeds: [embed] });
         }
 
         if (!player) {
@@ -60,15 +66,15 @@ module.exports = {
             embed.setDescription(`Added **[${result.playlistName}](${query})** - \`${result.tracks.length}\` songs to the queue.`);
         } else {
             const track = result.tracks[0];
-            const trackTitle = formatString(track.title, 30).replace(/ - Topic$/, "") || "Unknown";
-            const trackAuthor = formatString(track.author, 25).replace(/ - Topic$/, "") || "Unknown";
+            const trackTitle = formatString(track.title || "Unknown", 30).replace(/ - Topic$/, "") || "Unknown";
+            const trackAuthor = formatString(track.author || "Unknown", 25).replace(/ - Topic$/, "") || "Unknown";
 
             player.queue.add(track);
 
             embed.setDescription(`Added **[${trackTitle} - ${trackAuthor}](${track.uri})** - \`${convertTime(track.duration)}\`.`);
         }
 
-        if (msg) await msg.edit({ embeds: [embed] });
+        await safeEditReply(interaction, { embeds: [embed] });
         if (!player.playing) return player.play();
     },
 };

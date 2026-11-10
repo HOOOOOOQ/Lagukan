@@ -1,108 +1,126 @@
-const { PermissionsBitField, MessageFlags } = require("discord.js");
+const { EmbedBuilder, MessageFlags, PermissionsBitField } = require("discord.js");
 const Logger = require("../utils/logger");
+const { safeReply, isUnknownInteractionError, isAlreadyAcknowledgedError } = require("./interactionResponder.js");
+
+function resolveMemberPermissions(response) {
+    if (response?.memberPermissions && typeof response.memberPermissions.has === "function") {
+        return response.memberPermissions;
+    }
+
+    const rawPerms = response?.member?.permissions;
+    if (rawPerms && typeof rawPerms.has === "function") {
+        return rawPerms;
+    }
+
+    if (typeof rawPerms === "string" || typeof rawPerms === "bigint" || typeof rawPerms === "number") {
+        try {
+            return new PermissionsBitField(BigInt(rawPerms));
+        } catch {
+            return null;
+        }
+    }
+
+    return null;
+}
 
 module.exports = {
-    permissions: async (client, response, command, embed, player, args) => {
+    permissions: async (client, response, command, args) => {
         const botName = client.config.botName || "Lagukan";
+        const embed = new EmbedBuilder().setColor(client.config.embedColor);
+        const userId = response.user?.id || response.author?.id;
 
-        if (command.permissions.bot) {
-            if (!response.guild.members.me.permissions.has(command.permissions.bot || [])) {
-                embed.setDescription(
-                    `${botName} doesn't have permission \`${command.permissions.bot.join(", ")}\` to execute this command.`,
-                );
+        if (command.devOnly && !client.config.dev.includes(userId)) {
+            embed.setDescription(`The command is only available for developers.`);
 
-                return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-            }
+            return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        if (command.permissions.user) {
-            if (!response.member.permissions.has(command.permissions.user || [])) {
-                embed.setDescription(`You don't have permission \`${command.permissions.user.join(", ")}\` to execute this command.`);
+        const memberPerms = resolveMemberPermissions(response);
+        if (command.permissions.user?.length > 0 && (!memberPerms || !memberPerms.has(command.permissions.user))) {
+            embed.setDescription(`You don't have \`${command.permissions.user.join(", ")}\` permissions to execute this command.`);
 
-                return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-            }
+            return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
+        }
+
+        const botMember = response.guild?.members?.me;
+        if (command.permissions.bot?.length > 0 && botMember && !botMember.permissions.has(command.permissions.bot)) {
+            embed.setDescription(`The bot doesn't have \`${command.permissions.bot.join(", ")}\` permissions to execute this command.`);
+
+            return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         if (command.settings.voice) {
-            if (!response.member.voice.channel) {
+            const voiceChannel = response.member?.voice?.channel;
+            if (!voiceChannel) {
                 embed.setDescription(`You need to join a voice channel first.`);
 
-                return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
             }
 
-            if (
-                !response.guild.members.me.permissions.has(PermissionsBitField.Flags.Connect) ||
-                !response.guild.members.me.permissionsIn(response.member.voice.channelId).has(PermissionsBitField.Flags.Connect)
-            ) {
-                embed.setDescription(`${botName} doesn't have permission \`Connect\` in your voice channel.`);
+            if (botMember) {
+                const botVoicePerms = voiceChannel.permissionsFor(botMember);
+                if (botVoicePerms && !botVoicePerms.has(PermissionsBitField.Flags.Connect)) {
+                    embed.setDescription(`The bot doesn't have \`Connect\` permission in ${voiceChannel.toString()}.`);
 
-                return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-            }
-
-            if (
-                !response.guild.members.me.permissions.has(PermissionsBitField.Flags.Speak) ||
-                !response.guild.members.me.permissionsIn(response.member.voice.channelId).has(PermissionsBitField.Flags.Speak)
-            ) {
-                embed.setDescription(`${botName} doesn't have permission \`Speak\` in your voice channel.`);
-
-                return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-            }
-
-            if (response.member.voice.channel.type === 13) {
-                if (
-                    !response.guild.members.me.permissions.has(PermissionsBitField.Flags.RequestToSpeak) ||
-                    !response.guild.members.me.permissionsIn(response.member.voice.channelId).has(PermissionsBitField.Flags.RequestToSpeak)
-                ) {
-                    embed.setDescription(`${botName} doesn't have permission \`Request To Speak\` in your stage channel.`);
-
-                    return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                    return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
                 }
 
-                if (
-                    !response.guild.members.me.permissions.has(PermissionsBitField.Flags.PrioritySpeaker) ||
-                    !response.guild.members.me.permissionsIn(response.member.voice.channelId).has(PermissionsBitField.Flags.PrioritySpeaker)
-                ) {
-                    embed.setDescription(`${botName} doesn't have permission \`Priority Speaker\` in your stage channel.`);
+                if (botVoicePerms && !botVoicePerms.has(PermissionsBitField.Flags.Speak) && voiceChannel.type === 2) {
+                    embed.setDescription(`The bot doesn't have \`Speak\` permission in ${voiceChannel.toString()}.`);
 
-                    return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                    return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
                 }
             }
         }
 
+        let player = client.rainlink.players.get(response.guild.id);
+
         if (command.settings.player) {
             if (!player) {
-                embed.setDescription(`There is no player in this server.`);
+                embed.setDescription(`There is no active player in this server.`);
 
-                return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
             }
 
-            if (player.voiceId !== response.member.voice.channelId) {
-                embed.setDescription(`You need to join the same voice channel as ${botName}.`);
+            if (player.voiceId !== response.member?.voice?.channelId) {
+                embed.setDescription(`You need to be in the same voice channel as ${botName}.`);
 
-                return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
             }
         }
 
         if (command.settings.current) {
-            if (!player.queue.current) {
+            if (!player || !player.queue.current) {
                 embed.setDescription(`There is no song currently playing in this server.`);
 
-                return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
-            }
-        }
-
-        if (command.devOnly) {
-            if (!client.config.dev.includes(response.member.id)) {
-                embed.setDescription(`This command only available for developers.`);
-
-                return response.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+                return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
             }
         }
 
         try {
-            command.run(client, response, player, args);
+            await command.run(client, response, player, args);
         } catch (error) {
-            Logger.error("Failed to execute command:", error);
+            if (isUnknownInteractionError(error)) {
+                Logger.warn(`[Command] Token interaction kedaluwarsa (10062) saat menjalankan '${command.name}'. Tidak dilakukan retry.`);
+                return;
+            }
+
+            if (isAlreadyAcknowledgedError(error)) {
+                Logger.debug(`[Command] Interaksi '${command.name}' sudah direspons sebelumnya (InteractionAlreadyReplied).`);
+                return;
+            }
+
+            Logger.error(`Failed to execute command '${command.name}':`, error);
+
+            const errEmbed = new EmbedBuilder()
+                .setColor(0xff4757)
+                .setDescription(
+                    command.locale === "id"
+                        ? "❌ Terjadi kesalahan internal saat menjalankan perintah ini. Silakan coba beberapa saat lagi."
+                        : "❌ An unexpected error occurred while executing this command. Please try again later.",
+                );
+
+            await safeReply(response, { embeds: [errEmbed], flags: MessageFlags.Ephemeral });
         }
     },
 };

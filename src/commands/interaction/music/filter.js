@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "filter",
@@ -26,7 +27,6 @@ module.exports = {
                 { name: "treblebass", value: "treblebass" },
                 { name: "vaporwave", value: "vaporwave" },
                 { name: "vibrato", value: "vibrato" },
-                // For additional options, check the official RainlinkFilter documentation here: https://docs-rainlinkjs.vercel.app/classes/RainlinkFilter.html#set
             ],
         },
     ],
@@ -41,11 +41,14 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return;
+
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
         const mode = interaction.options.getString("mode");
         const currentVolume = player.volume;
 
-        player.filter.set(mode);
+        await Promise.resolve(player.filter.set(mode));
 
         if (mode === "clear") {
             embed.setDescription(`Filter has been cleared.`);
@@ -53,9 +56,9 @@ module.exports = {
             embed.setDescription(`Filter has been set to: \`${mode}\``);
         }
 
-        player.setVolume(currentVolume);
+        await Promise.resolve(player.setVolume(currentVolume));
 
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return safeEditReply(interaction, { embeds: [embed] });
     },
 };
 
