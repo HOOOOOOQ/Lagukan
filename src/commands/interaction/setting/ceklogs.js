@@ -1,4 +1,4 @@
-const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { EmbedBuilder, MessageFlags, escapeMarkdown } = require("discord.js");
 const {
     TAG_COLORS,
     FOOTER_TEXT,
@@ -7,9 +7,13 @@ const {
     getServerTagStatsSnapshot,
 } = require("../../../functions/serverTagLogger.js");
 
+function escapeInline(value) {
+    return String(value ?? "").replace(/`/g, "ˋ");
+}
+
 module.exports = {
     name: "ceklogs",
-    description: "Lihat konfigurasi channel dan status fitur Server Tag Logger saat ini",
+    description: "Lihat konfigurasi dan status Server Tag Logger pada server ini",
     category: "setting",
     locale: "id",
     options: [],
@@ -26,7 +30,8 @@ module.exports = {
     run: async (client, interaction) => {
         await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
-        const guild = interaction.guild;
+        const guildId = interaction.guildId;
+        const guild = interaction.guild || client.guilds.cache.get(guildId);
         const botAvatar = client.user?.displayAvatarURL?.({ size: 128 }) || undefined;
         const snapshot = await getServerTagStatsSnapshot(client, guild);
         const realTimeIntent = hasServerMembersIntent(client);
@@ -35,14 +40,14 @@ module.exports = {
         let permissionHealth = "⚪ Menunggu pemilihan channel";
         let embedColor = snapshot.enabled ? TAG_COLORS.INFO : TAG_COLORS.REMOVED;
 
-        if (snapshot.channelId) {
+        if (snapshot.logChannelId) {
             const targetChannel =
-                guild.channels?.cache?.get?.(snapshot.channelId) ||
-                (typeof guild.channels?.fetch === "function" ? await guild.channels.fetch(snapshot.channelId).catch(() => null) : null);
+                guild.channels?.cache?.get?.(snapshot.logChannelId) ||
+                (typeof guild.channels?.fetch === "function" ? await guild.channels.fetch(snapshot.logChannelId).catch(() => null) : null);
 
             if (!targetChannel) {
-                channelDisplay = `⚠️ Channel tidak ditemukan (\`${snapshot.channelId}\`) — kemungkinan telah dihapus`;
-                permissionHealth = "❌ Channel tidak tersedia, atur ulang dengan `/setlogs`";
+                channelDisplay = `⚠️ Channel tidak ditemukan (\`${snapshot.logChannelId}\`) — kemungkinan sudah dihapus`;
+                permissionHealth = "❌ Channel tidak tersedia, silakan atur ulang melalui `/setlogs`";
                 embedColor = TAG_COLORS.WARNING;
             } else {
                 channelDisplay = `<#${targetChannel.id}> (\`${targetChannel.id}\`)`;
@@ -57,16 +62,24 @@ module.exports = {
             }
         }
 
+        const detectedTagLabel = snapshot.detectedServerTag
+            ? `\`[${escapeInline(snapshot.detectedServerTag)}]\``
+            : snapshot.hasGuildTagsFeature
+              ? "`Fitur aktif (menunggu member memakai tag server ini)`"
+              : "`Belum terdeteksi pada server ini`";
+
         const updatedAtUnix = snapshot.updatedAt ? Math.floor(new Date(snapshot.updatedAt).getTime() / 1000) : null;
         const updatedInfo = updatedAtUnix
             ? `<t:${updatedAtUnix}:R>${snapshot.updatedBy ? ` oleh <@${snapshot.updatedBy}>` : ""}`
-            : "`Belum pernah diperbarui`";
+            : "`Belum pernah diatur`";
 
         const configLines = [
+            `• **Server:** **${escapeMarkdown(guild.name)}** (\`${guildId}\`)`,
+            `• **Server Tag Terdeteksi:** ${detectedTagLabel}`,
             `• **Status Fitur:** ${snapshot.enabled ? "🟢 Aktif" : "🔴 Nonaktif"}`,
             `• **Channel Log:** ${channelDisplay}`,
             `• **Status Izin Bot:** ${permissionHealth}`,
-            `• **Mode Deteksi Gateway:** ${
+            `• **Mode Deteksi:** ${
                 realTimeIntent
                     ? "⚡ Real-Time (`Server Members Intent` aktif)"
                     : "ℹ️ Mode Kompatibilitas (aktifkan `SERVER MEMBERS INTENT` untuk deteksi real-time)"
@@ -75,10 +88,10 @@ module.exports = {
         ];
 
         const statsLines = [
-            `• **Total Pemasangan:** \`${snapshot.stats.totalInstalled}\` kali`,
-            `• **Total Penggantian:** \`${snapshot.stats.totalChanged}\` kali`,
-            `• **Total Penghapusan:** \`${snapshot.stats.totalRemoved}\` kali`,
-            `• **Member Bertag Saat Ini:** \`${snapshot.activeSummary.totalActive}\` member terpantau`,
+            `• **Dipasang:** \`${snapshot.statistics.installed}\` kali`,
+            `• **Diganti:** \`${snapshot.statistics.changed}\` kali`,
+            `• **Dihapus:** \`${snapshot.statistics.removed}\` kali`,
+            `• **Member Aktif Pemakai Tag Server Ini:** \`${snapshot.activeOwnTagMembers}\` member`,
         ];
 
         const embed = new EmbedBuilder()
@@ -87,20 +100,20 @@ module.exports = {
                 name: `${guild.name} • Status Server Tag Logger`,
                 iconURL: guild.iconURL?.({ size: 128 }) || botAvatar,
             })
-            .setTitle("🔎 Informasi Pengaturan Server Tag Logger")
+            .setTitle("🔎 Konfigurasi Server Tag Logger")
             .setDescription(
                 snapshot.enabled
-                    ? "Sistem pemantau **Server Tag** aktif dan siap mencatat perubahan tag member di server ini."
-                    : "Sistem pemantau **Server Tag** saat ini belum diaktifkan. Administrator dapat menggunakan command `/setlogs` untuk memilih channel log.",
+                    ? `Pemantau **Server Tag** aktif khusus untuk server **${escapeMarkdown(guild.name)}**.`
+                    : `Pemantau **Server Tag** pada server **${escapeMarkdown(guild.name)}** saat ini belum diaktifkan. Gunakan \`/setlogs\` untuk mengatur channel log.`,
             )
             .addFields(
                 {
-                    name: "⚙️ Konfigurasi Saat Ini",
+                    name: "⚙️ Pengaturan Server Saat Ini",
                     value: configLines.join("\n"),
                     inline: false,
                 },
                 {
-                    name: "📊 Ringkasan Aktivitas",
+                    name: "📊 Statistik Server Ini",
                     value: statsLines.join("\n"),
                     inline: false,
                 },

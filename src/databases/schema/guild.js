@@ -12,19 +12,6 @@ const createGuild = mongoose.Schema({
         timezone: { type: String, default: "Asia/Jakarta" },
         source: { type: String, default: "env" },
     },
-    serverTagLog: {
-        enabled: { type: Boolean, default: false },
-        channelId: { type: String, default: null },
-        updatedBy: { type: String, default: null },
-        updatedAt: { type: Date, default: null },
-        stats: {
-            totalInstalled: { type: Number, default: 0 },
-            totalChanged: { type: Number, default: 0 },
-            totalRemoved: { type: Number, default: 0 },
-            totalReinstalled: { type: Number, default: 0 },
-        },
-        recentHistory: { type: Array, default: [] },
-    },
 });
 
 module.exports = mongoose.model("guild", createGuild);

@@ -1,20 +1,19 @@
 const mongoose = require("mongoose");
 const { ChannelType, EmbedBuilder, GatewayIntentBits, PermissionsBitField, escapeMarkdown } = require("discord.js");
-const { createDataGuild, normalizeGuildData } = require("./createData.js");
+const ServerTagConfig = require("../databases/schema/serverTagConfig.js");
 const ServerTagMember = require("../databases/schema/serverTagMember.js");
 const Logger = require("../utils/logger");
 
 const TAG_COLORS = {
     INSTALLED: 0x06b6d4, // Lagukan Signature Cyan
-    REINSTALLED: 0x00d2ff, // Lagukan Bright Electric Cyan
-    CHANGED: 0x0ea5e9, // Lagukan Electric Sky-Blue
+    CHANGED: 0x0ea5e9, // Lagukan Electric Blue
     REMOVED: 0x0891b2, // Lagukan Deep Cyan-Teal
     INFO: 0x06b6d4, // Lagukan Cyan
-    WARNING: 0xf59e0b, // Amber Warning
-    ERROR: 0xef4444, // Soft Crimson Error
+    WARNING: 0xf59e0b, // Warning Amber
+    ERROR: 0xef4444, // Error Red
 };
 
-const FOOTER_TEXT = "LAGUKAN • SERVER TAG LOGGER";
+const FOOTER_TEXT = "LAGUKAN SERVER TAG LOGGER";
 const MAX_MEMBER_HISTORY = 20;
 const MAX_GUILD_RECENT_HISTORY = 25;
 const WIB_TIMEZONE = "Asia/Jakarta";
@@ -37,7 +36,7 @@ const REQUIRED_CHANNEL_PERMISSIONS = [
     },
 ];
 
-// Per-(guildId:userId) serialization lock to prevent duplicate notifications on simultaneous Gateway events
+// Per-(guildId:userId) async lock to guarantee atomic state transitions without duplicate logs
 const memberLocks = new Map();
 const warnedLogChannels = new Map();
 const WARN_COOLDOWN_MS = 60_000;
@@ -63,7 +62,11 @@ function isMongoReady() {
     return mongoose.connection?.readyState === 1;
 }
 
-function getModel(client) {
+function getConfigModel(client) {
+    return client?.serverTagConfigData || ServerTagConfig;
+}
+
+function getMemberModel(client) {
     return client?.serverTagMemberData || ServerTagMember;
 }
 
@@ -78,6 +81,21 @@ function hasServerMembersIntent(client) {
 
 function escapeInlineCode(value) {
     return String(value ?? "").replace(/`/g, "ˋ");
+}
+
+function formatWibTimeShort(date = new Date()) {
+    try {
+        const formatted = new Intl.DateTimeFormat("id-ID", {
+            timeZone: WIB_TIMEZONE,
+            hour: "2-digit",
+            minute: "2-digit",
+            hourCycle: "h23",
+        }).format(date);
+
+        return `${formatted.replace(/\./g, ":")} WIB`;
+    } catch {
+        return `${date.toISOString().slice(11, 16)} UTC`;
+    }
 }
 
 function formatWibDateTime(date = new Date()) {
@@ -99,9 +117,14 @@ function formatWibDateTime(date = new Date()) {
     }
 }
 
+function buildTagBadgeUrl(identityGuildId, badge) {
+    if (!identityGuildId || !badge) return null;
+    return `https://cdn.discordapp.com/guild-tag-badges/${identityGuildId}/${badge}.png?size=128`;
+}
+
 /**
- * Extracts active Server Tag (Guild Tag) information strictly from official Discord API v10 User.primaryGuild.
- * Returns null if the user currently has no enabled Server Tag.
+ * Dynamically extracts active Server Tag data strictly from official Discord API v10 `User.primaryGuild`.
+ * Never uses static or hardcoded tag values.
  */
 function extractActiveTag(user) {
     if (!user) return null;
@@ -128,7 +151,7 @@ function extractActiveTag(user) {
     }
 
     if (!badgeUrl && identityGuildId && badge) {
-        badgeUrl = `https://cdn.discordapp.com/guild-tag-badges/${identityGuildId}/${badge}.png?size=128`;
+        badgeUrl = buildTagBadgeUrl(identityGuildId, badge);
     }
 
     return {
@@ -147,9 +170,7 @@ function normalizeStoredTag(stored) {
 
     const identityGuildId = stored.identityGuildId ? String(stored.identityGuildId) : null;
     const badge = stored.badge ? String(stored.badge) : null;
-    const badgeUrl =
-        stored.badgeUrl ||
-        (identityGuildId && badge ? `https://cdn.discordapp.com/guild-tag-badges/${identityGuildId}/${badge}.png?size=128` : null);
+    const badgeUrl = stored.badgeUrl || buildTagBadgeUrl(identityGuildId, badge);
 
     return {
         identityGuildId,
@@ -188,6 +209,74 @@ function isSameActiveTag(tagA, tagB) {
     return a.tag === b.tag && (a.identityGuildId || null) === (b.identityGuildId || null);
 }
 
+/**
+ * Dynamically detects a guild's own Server Tag if exposed on the guild object or worn by any member of that guild.
+ */
+function detectGuildOwnTagFromMembers(guild, membersCollection) {
+    if (!guild?.id) return null;
+
+    const rawGuildTag = guild.clan?.tag || guild.profile?.tag || null;
+    const rawGuildBadge = guild.clan?.badge || guild.profile?.badge || null;
+    if (typeof rawGuildTag === "string" && rawGuildTag.trim()) {
+        return {
+            tag: rawGuildTag.trim(),
+            badge: rawGuildBadge ? String(rawGuildBadge) : null,
+            updatedAt: new Date(),
+        };
+    }
+
+    if (membersCollection && typeof membersCollection.values === "function") {
+        for (const member of membersCollection.values()) {
+            if (!member?.user || member.user.bot) continue;
+            const active = extractActiveTag(member.user);
+            if (active && active.identityGuildId === String(guild.id)) {
+                return {
+                    tag: active.tag,
+                    badge: active.badge || null,
+                    updatedAt: new Date(),
+                };
+            }
+        }
+    }
+
+    return null;
+}
+
+function normalizeServerTagConfig(guildId, raw = {}, guild = null) {
+    const gId = String(raw.guildId || guildId || guild?.id || "");
+    const rawStats = raw.statistics || raw.stats || {};
+    const rawDetected = raw.detectedServerTag || {};
+    const logChannelId = raw.logChannelId ?? raw.channelId ?? null;
+
+    return {
+        guildId: gId,
+        guildName: guild?.name || raw.guildName || null,
+        logChannelId: logChannelId ? String(logChannelId) : null,
+        enabled: Boolean(raw.enabled && logChannelId),
+        detectedServerTag: {
+            tag: rawDetected.tag ? String(rawDetected.tag) : null,
+            badge: rawDetected.badge ? String(rawDetected.badge) : null,
+            updatedAt: rawDetected.updatedAt || null,
+        },
+        statistics: {
+            installed: Math.max(0, Number(rawStats.installed ?? rawStats.totalInstalled) || 0),
+            changed: Math.max(0, Number(rawStats.changed ?? rawStats.totalChanged) || 0),
+            removed: Math.max(0, Number(rawStats.removed ?? rawStats.totalRemoved) || 0),
+        },
+        recentHistory: Array.isArray(raw.recentHistory) ? raw.recentHistory.slice(0, MAX_GUILD_RECENT_HISTORY) : [],
+        updatedBy: raw.updatedBy ? String(raw.updatedBy) : null,
+        updatedAt: raw.updatedAt || null,
+    };
+}
+
+function getConfigCacheKey(guildId) {
+    return `tagConfig_${guildId}`;
+}
+
+function getMemberCacheKey(guildId, userId) {
+    return `tagMember_${guildId}_${userId}`;
+}
+
 function hasAdminPermission(member) {
     return Boolean(member?.permissions?.has?.(PermissionsBitField.Flags.Administrator));
 }
@@ -200,7 +289,7 @@ function buildAdminDeniedEmbed(client, commandName) {
     return new EmbedBuilder()
         .setColor(TAG_COLORS.ERROR)
         .setTitle("⛔ Akses Ditolak")
-        .setDescription(`Command \`/${commandName}\` hanya dapat digunakan oleh anggota dengan izin **Administrator** di server ini.`)
+        .setDescription(`Command \`/${commandName}\` hanya dapat dijalankan oleh **Administrator** pada server ini.`)
         .setFooter({ text: FOOTER_TEXT, iconURL: getBotAvatarUrl(client) })
         .setTimestamp();
 }
@@ -215,12 +304,12 @@ function validateLogChannel(guild, channel) {
         };
     }
 
-    if (channel.guildId && channel.guildId !== guild.id) {
+    if (channel.guildId && String(channel.guildId) !== String(guild.id)) {
         return {
             valid: false,
             code: "WRONG_GUILD",
             missingPermissions: [],
-            message: "Channel yang dipilih bukan berasal dari server ini.",
+            message: "Channel yang dipilih bukan milik server ini.",
         };
     }
 
@@ -230,7 +319,7 @@ function validateLogChannel(guild, channel) {
             valid: false,
             code: "INVALID_CHANNEL_TYPE",
             missingPermissions: [],
-            message: "Channel log harus berupa **Text Channel** atau **Announcement Channel** biasa (bukan Voice/Category/Forum).",
+            message: "Channel log harus berupa **Text Channel** atau **Announcement Channel** server (bukan Voice/Category/Forum).",
         };
     }
 
@@ -240,7 +329,7 @@ function validateLogChannel(guild, channel) {
             valid: false,
             code: "BOT_MEMBER_UNAVAILABLE",
             missingPermissions: [],
-            message: "Data member bot belum siap di server ini. Silakan coba beberapa saat lagi.",
+            message: "Data member bot pada server ini belum siap. Silakan coba beberapa saat lagi.",
         };
     }
 
@@ -259,7 +348,7 @@ function validateLogChannel(guild, channel) {
             valid: false,
             code: "MISSING_PERMISSIONS",
             missingPermissions: missing,
-            message: `Bot tidak memiliki izin yang dibutuhkan pada channel <#${channel.id}>:\n${listText}\n\nSilakan aktifkan izin tersebut pada pengaturan channel atau role **Lagukan**, lalu jalankan kembali command ini.`,
+            message: `Bot belum memiliki izin yang diperlukan pada channel <#${channel.id}>:\n${listText}\n\nSilakan berikan izin tersebut pada pengaturan channel atau role **Lagukan**, lalu coba kembali.`,
         };
     }
 
@@ -271,82 +360,145 @@ function validateLogChannel(guild, channel) {
     };
 }
 
-async function ensureGuildRecord(client, guild) {
-    if (!guild?.id) return null;
+/**
+ * Retrieves or automatically initializes per-guild ServerTagConfig using MongoDB upsert keyed strictly by `guildId`.
+ */
+async function ensureServerTagConfig(client, guildOrId) {
+    const guild = typeof guildOrId === "object" && guildOrId !== null ? guildOrId : client?.guilds?.cache?.get?.(String(guildOrId)) || null;
+    const guildId = String(typeof guildOrId === "string" ? guildOrId : guild?.id || "");
+    if (!guildId) return null;
 
-    let guildData = client.data.get(`guildData_${guild.id}`);
-    if (!guildData) {
-        guildData = await createDataGuild(client, guild);
+    const cacheKey = getConfigCacheKey(guildId);
+    const cached = client.data.get(cacheKey);
+    if (cached) {
+        if (guild?.name && cached.guildName !== guild.name) {
+            cached.guildName = guild.name;
+        }
+        return cached;
     }
 
-    const normalized = normalizeGuildData(client, guild, guildData || { id: guild.id });
-    client.data.set(`guildData_${guild.id}`, normalized);
+    // Check legacy guildData.serverTagLog for seamless migration if present
+    const legacyTagLog = client.data.get(`guildData_${guildId}`)?.serverTagLog || null;
+    const initialDefaults = normalizeServerTagConfig(
+        guildId,
+        legacyTagLog
+            ? {
+                  guildId,
+                  guildName: guild?.name || null,
+                  logChannelId: legacyTagLog.channelId || null,
+                  enabled: Boolean(legacyTagLog.enabled && legacyTagLog.channelId),
+                  statistics: {
+                      installed: legacyTagLog.stats?.totalInstalled || 0,
+                      changed: legacyTagLog.stats?.totalChanged || 0,
+                      removed: legacyTagLog.stats?.totalRemoved || 0,
+                  },
+                  recentHistory: legacyTagLog.recentHistory || [],
+                  updatedBy: legacyTagLog.updatedBy || null,
+                  updatedAt: legacyTagLog.updatedAt || null,
+              }
+            : { guildId, guildName: guild?.name || null },
+        guild,
+    );
+
+    if (isMongoReady()) {
+        const ConfigModel = getConfigModel(client);
+        const doc = await ConfigModel.findOneAndUpdate(
+            { guildId },
+            {
+                $setOnInsert: initialDefaults,
+            },
+            { upsert: true, returnDocument: "after" },
+        )
+            .lean()
+            .catch((err) => {
+                Logger.error(`[ServerTagLogger] Gagal melakukan upsert konfigurasi awal untuk guild ${guildId}:`, err);
+                return null;
+            });
+
+        if (doc) {
+            const { _id, __v, ...raw } = doc;
+            const normalized = normalizeServerTagConfig(guildId, raw, guild);
+            client.data.set(cacheKey, normalized);
+            return normalized;
+        }
+    }
+
+    client.data.set(cacheKey, initialDefaults);
+    return initialDefaults;
+}
+
+async function saveServerTagConfig(client, guildId, nextData, guild = null) {
+    const gId = String(guildId);
+    const cacheKey = getConfigCacheKey(gId);
+    const normalized = normalizeServerTagConfig(gId, { ...nextData, guildId: gId }, guild);
+
+    client.data.set(cacheKey, normalized);
+
+    if (isMongoReady()) {
+        const ConfigModel = getConfigModel(client);
+        await ConfigModel.findOneAndUpdate({ guildId: gId }, { $set: normalized }, { upsert: true, returnDocument: "after" }).catch(
+            (err) => {
+                Logger.error(`[ServerTagLogger] Gagal menyimpan konfigurasi Server Tag untuk guild ${gId}:`, err);
+            },
+        );
+    }
 
     return normalized;
 }
 
-async function persistGuildServerTagLog(client, guild, nextServerTagLog) {
-    const current = (await ensureGuildRecord(client, guild)) || normalizeGuildData(client, guild, { id: guild.id });
-    const updatedGuildData = normalizeGuildData(client, guild, {
-        ...current,
-        serverTagLog: nextServerTagLog,
-    });
-
-    client.data.set(`guildData_${guild.id}`, updatedGuildData);
-
-    if (isMongoReady() && client.guildData?.findOneAndUpdate) {
-        await client.guildData
-            .findOneAndUpdate(
-                { id: guild.id },
-                { $set: { serverTagLog: updatedGuildData.serverTagLog } },
-                { upsert: true, returnDocument: "after" },
-            )
-            .catch((err) => {
-                Logger.error(`[ServerTagLogger] Gagal menyimpan konfigurasi guild ${guild.id} ke MongoDB:`, err);
-            });
-    }
-
-    return updatedGuildData.serverTagLog;
-}
-
 async function setServerTagLogChannel(client, guild, channelId, actorUserId) {
-    const guildData = await ensureGuildRecord(client, guild);
-    const prevTagLog = guildData.serverTagLog || {};
+    const guildId = String(guild.id);
+    const current = await ensureServerTagConfig(client, guild);
 
-    const nextTagLog = {
-        ...prevTagLog,
-        enabled: true,
-        channelId: String(channelId),
-        updatedBy: actorUserId ? String(actorUserId) : null,
-        updatedAt: new Date(),
-    };
+    const updated = await saveServerTagConfig(
+        client,
+        guildId,
+        {
+            ...current,
+            guildId,
+            guildName: guild.name || current.guildName,
+            logChannelId: String(channelId),
+            enabled: true,
+            updatedBy: actorUserId ? String(actorUserId) : null,
+            updatedAt: new Date(),
+        },
+        guild,
+    );
 
-    const saved = await persistGuildServerTagLog(client, guild, nextTagLog);
+    const { syncedCount, detectedTag } = await syncGuildMemberTagsBaseline(client, guild).catch(() => ({
+        syncedCount: 0,
+        detectedTag: null,
+    }));
 
-    // Seed baseline tag states for currently known/reachable guild members without spamming notifications
-    const syncedCount = await syncGuildMemberTagsBaseline(client, guild).catch(() => 0);
+    const finalConfig = await ensureServerTagConfig(client, guild);
 
     return {
-        config: saved,
+        config: finalConfig || updated,
         syncedCount,
+        detectedTag: detectedTag || finalConfig?.detectedServerTag?.tag || null,
     };
 }
 
 async function resetServerTagLogChannel(client, guild, actorUserId) {
-    const guildData = await ensureGuildRecord(client, guild);
-    const prevTagLog = guildData.serverTagLog || {};
-    const wasConfigured = Boolean(prevTagLog.enabled || prevTagLog.channelId);
-    const previousChannelId = prevTagLog.channelId || null;
+    const guildId = String(guild.id);
+    const current = await ensureServerTagConfig(client, guild);
+    const wasConfigured = Boolean(current.enabled || current.logChannelId);
+    const previousChannelId = current.logChannelId || null;
 
-    const nextTagLog = {
-        ...prevTagLog,
-        enabled: false,
-        channelId: null,
-        updatedBy: actorUserId ? String(actorUserId) : null,
-        updatedAt: new Date(),
-    };
-
-    const saved = await persistGuildServerTagLog(client, guild, nextTagLog);
+    const saved = await saveServerTagConfig(
+        client,
+        guildId,
+        {
+            ...current,
+            guildId,
+            guildName: guild.name || current.guildName,
+            logChannelId: null,
+            enabled: false,
+            updatedBy: actorUserId ? String(actorUserId) : null,
+            updatedAt: new Date(),
+        },
+        guild,
+    );
 
     return {
         wasConfigured,
@@ -355,18 +507,16 @@ async function resetServerTagLogChannel(client, guild, actorUserId) {
     };
 }
 
-function getMemberCacheKey(guildId, userId) {
-    return `tagMember_${guildId}_${userId}`;
-}
-
 async function getMemberTagRecord(client, guildId, userId) {
-    const cacheKey = getMemberCacheKey(guildId, userId);
+    const gId = String(guildId);
+    const uId = String(userId);
+    const cacheKey = getMemberCacheKey(gId, uId);
     const cached = client.data.get(cacheKey);
     if (cached) return cached;
 
     if (isMongoReady()) {
-        const Model = getModel(client);
-        const doc = await Model.findOne({ guildId: String(guildId), userId: String(userId) })
+        const MemberModel = getMemberModel(client);
+        const doc = await MemberModel.findOne({ guildId: gId, userId: uId })
             .lean()
             .catch(() => null);
 
@@ -381,10 +531,13 @@ async function getMemberTagRecord(client, guildId, userId) {
 }
 
 async function saveMemberTagRecord(client, record) {
-    const cacheKey = getMemberCacheKey(record.guildId, record.userId);
+    const gId = String(record.guildId);
+    const uId = String(record.userId);
+    const cacheKey = getMemberCacheKey(gId, uId);
+
     const cleanRecord = {
-        guildId: String(record.guildId),
-        userId: String(record.userId),
+        guildId: gId,
+        userId: uId,
         username: record.username || null,
         currentTag: toStoredTagObject(normalizeStoredTag(record.currentTag)),
         installCount: Math.max(0, Number(record.installCount) || 0),
@@ -400,68 +553,60 @@ async function saveMemberTagRecord(client, record) {
     client.data.set(cacheKey, cleanRecord);
 
     if (isMongoReady()) {
-        const Model = getModel(client);
-        await Model.findOneAndUpdate(
-            { guildId: cleanRecord.guildId, userId: cleanRecord.userId },
+        const MemberModel = getMemberModel(client);
+        await MemberModel.findOneAndUpdate(
+            { guildId: gId, userId: uId },
             { $set: cleanRecord },
             { upsert: true, returnDocument: "after" },
         ).catch((err) => {
-            Logger.error(`[ServerTagLogger] Gagal menyimpan riwayat member ${cleanRecord.userId} di guild ${cleanRecord.guildId}:`, err);
+            Logger.error(`[ServerTagLogger] Gagal menyimpan riwayat member ${uId} pada guild ${gId}:`, err);
         });
     }
 
     return cleanRecord;
 }
 
-async function countActiveTaggedMembers(client, guildId) {
+/**
+ * Counts members in `guildId` who currently wear THIS server's own Server Tag (`identityGuildId === guildId`).
+ */
+async function countGuildOwnTaggedMembers(client, guildId) {
     const gId = String(guildId);
 
     if (isMongoReady()) {
-        const Model = getModel(client);
-        const docs = await Model.find({ guildId: gId, "currentTag.identityEnabled": true }, { userId: 1, currentTag: 1 })
+        const MemberModel = getMemberModel(client);
+        const docs = await MemberModel.find({ guildId: gId, "currentTag.identityEnabled": true }, { userId: 1, currentTag: 1 })
             .lean()
             .catch(() => null);
 
         if (Array.isArray(docs)) {
-            const validDocs = docs.filter((d) => d.currentTag?.identityEnabled && d.currentTag?.tag);
-            const sameServerCount = validDocs.filter((d) => d.currentTag?.identityGuildId === gId).length;
-            return {
-                totalActive: validDocs.length,
-                sameServerActive: sameServerCount,
-                externalServerActive: Math.max(0, validDocs.length - sameServerCount),
-            };
+            const ownTagged = docs.filter(
+                (d) => d.currentTag?.identityEnabled && d.currentTag?.tag && String(d.currentTag?.identityGuildId) === gId,
+            );
+            return ownTagged.length;
         }
     }
 
-    // Fallback to in-memory cache when MongoDB is offline
     const prefix = `tagMember_${gId}_`;
-    let totalActive = 0;
-    let sameServerActive = 0;
+    let ownCount = 0;
 
     for (const [key, val] of client.data.entries()) {
         if (!key.startsWith(prefix)) continue;
-        if (val?.currentTag?.identityEnabled && val?.currentTag?.tag) {
-            totalActive += 1;
-            if (val.currentTag.identityGuildId === gId) {
-                sameServerActive += 1;
-            }
+        if (val?.currentTag?.identityEnabled && val?.currentTag?.tag && String(val.currentTag.identityGuildId) === gId) {
+            ownCount += 1;
         }
     }
 
-    return {
-        totalActive,
-        sameServerActive,
-        externalServerActive: Math.max(0, totalActive - sameServerActive),
-    };
+    return ownCount;
 }
 
 /**
- * Seeds baseline Server Tag state for guild members without sending notifications.
- * Prevents false-positive spam on bot startup or when /setlogs is first configured.
+ * Seeds baseline Server Tag states for a specific guild and dynamically detects the guild's own Server Tag.
+ * Never sends notifications during baseline sync.
  */
 async function syncGuildMemberTagsBaseline(client, guild) {
-    if (!guild?.id) return 0;
+    if (!guild?.id) return { syncedCount: 0, detectedTag: null };
 
+    const guildId = String(guild.id);
     let membersCollection = guild.members?.cache;
 
     if (hasServerMembersIntent(client) && typeof guild.members?.fetch === "function") {
@@ -469,203 +614,199 @@ async function syncGuildMemberTagsBaseline(client, guild) {
         if (fetched) membersCollection = fetched;
     }
 
-    if (!membersCollection || membersCollection.size === 0) return 0;
+    const discoveredOwnTag = detectGuildOwnTagFromMembers(guild, membersCollection);
+    if (discoveredOwnTag?.tag) {
+        const currentCfg = await ensureServerTagConfig(client, guild);
+        if (currentCfg.detectedServerTag?.tag !== discoveredOwnTag.tag || currentCfg.detectedServerTag?.badge !== discoveredOwnTag.badge) {
+            await saveServerTagConfig(
+                client,
+                guildId,
+                {
+                    ...currentCfg,
+                    detectedServerTag: discoveredOwnTag,
+                },
+                guild,
+            );
+        }
+    }
 
-    let synced = 0;
+    if (!membersCollection || membersCollection.size === 0) {
+        return { syncedCount: 0, detectedTag: discoveredOwnTag?.tag || null };
+    }
+
+    let syncedCount = 0;
     const now = new Date();
 
     for (const [, member] of membersCollection) {
         const user = member?.user;
         if (!user || user.bot) continue;
 
-        await withMemberLock(guild.id, user.id, async () => {
-            const existing = await getMemberTagRecord(client, guild.id, user.id);
+        await withMemberLock(guildId, user.id, async () => {
+            const existing = await getMemberTagRecord(client, guildId, user.id);
             const activeTag = extractActiveTag(user);
+            const wearsThisGuildTag = Boolean(activeTag && activeTag.identityGuildId === guildId);
 
             if (!existing) {
                 await saveMemberTagRecord(client, {
-                    guildId: guild.id,
+                    guildId,
                     userId: user.id,
                     username: user.username || null,
                     currentTag: activeTag,
                     installCount: 0,
                     changeCount: 0,
                     removeCount: 0,
-                    hadTagBefore: Boolean(activeTag),
-                    firstInstalledAt: activeTag ? now : null,
+                    hadTagBefore: wearsThisGuildTag,
+                    firstInstalledAt: wearsThisGuildTag ? now : null,
                     lastAction: "baseline",
                     lastUpdatedAt: now,
                     history: [],
                 });
-                synced += 1;
+                syncedCount += 1;
             } else {
-                // Refresh baseline silently on startup so offline changes don't burst-spam
                 const prevStored = normalizeStoredTag(existing.currentTag);
                 if (!isSameActiveTag(prevStored, activeTag)) {
                     await saveMemberTagRecord(client, {
                         ...existing,
                         username: user.username || existing.username || null,
                         currentTag: activeTag,
-                        hadTagBefore: Boolean(existing.hadTagBefore || prevStored || activeTag),
+                        hadTagBefore: Boolean(existing.hadTagBefore || wearsThisGuildTag),
                         lastUpdatedAt: now,
                     });
                 }
-                synced += 1;
+                syncedCount += 1;
             }
         });
     }
 
-    return synced;
+    return {
+        syncedCount,
+        detectedTag: discoveredOwnTag?.tag || null,
+    };
 }
 
-function resolveTagOriginLabel(client, guild, tagInfo) {
-    if (!tagInfo) return "`Tidak Diketahui`";
+/**
+ * Automatically ensures a new or existing guild has its isolated ServerTagConfig and detects its own tag if available.
+ */
+async function initializeGuildServerTag(client, guild) {
+    if (!guild?.id) return null;
 
-    if (tagInfo.identityGuildId && tagInfo.identityGuildId === guild.id) {
-        return `Server Ini (**${escapeMarkdown(guild.name)}**)`;
+    const config = await ensureServerTagConfig(client, guild);
+    const discovered = detectGuildOwnTagFromMembers(guild, guild.members?.cache);
+
+    if (discovered?.tag && config.detectedServerTag?.tag !== discovered.tag) {
+        await saveServerTagConfig(
+            client,
+            guild.id,
+            {
+                ...config,
+                detectedServerTag: discovered,
+            },
+            guild,
+        );
     }
 
-    if (tagInfo.identityGuildId) {
-        const cachedGuild = client?.guilds?.cache?.get?.(tagInfo.identityGuildId);
-        if (cachedGuild?.name) {
-            return `**${escapeMarkdown(cachedGuild.name)}** (\`${tagInfo.identityGuildId}\`)`;
-        }
-        return `Server Eksternal (\`${tagInfo.identityGuildId}\`)`;
+    if (config.enabled && config.logChannelId) {
+        await syncGuildMemberTagsBaseline(client, guild).catch(() => {});
     }
 
-    return "`Profil Discord`";
+    return config;
 }
 
-function formatMemberHistorySummary(memberRecord, actionType) {
-    const installs = Number(memberRecord?.installCount) || 0;
-    const changes = Number(memberRecord?.changeCount) || 0;
-    const removes = Number(memberRecord?.removeCount) || 0;
-
-    if (actionType === "installed" && installs === 1 && changes === 0 && removes === 0) {
-        return "Pemasangan pertama yang tercatat di server ini";
-    }
-
-    const parts = [`\`${installs}x\` pasang`];
-    if (changes > 0) parts.push(`\`${changes}x\` ganti`);
-    if (removes > 0) parts.push(`\`${removes}x\` lepas`);
-
-    return parts.join(" • ");
-}
-
-function buildServerTagActivityEmbed({
-    client,
-    guild,
-    user,
-    member,
-    actionType,
-    prevTag,
-    nextTag,
-    memberRecord,
-    guildStats,
-    activeSummary,
-    timestamp = new Date(),
-}) {
+/**
+ * Builds the Original Lagukan Cyan / Electric-Blue Notification Embed using 100% real Discord & MongoDB data.
+ */
+function buildServerTagActivityEmbed({ client, guild, user, actionType, prevTag, nextTag, statistics, timestamp = new Date() }) {
     const unixSec = Math.floor(timestamp.getTime() / 1000);
-    const wibText = formatWibDateTime(timestamp);
+    const wibShort = formatWibTimeShort(timestamp);
+    const wibFull = formatWibDateTime(timestamp);
     const botAvatar = getBotAvatarUrl(client);
     const guildIcon = guild.iconURL?.({ size: 128 }) || null;
-    const activeBadgeUrl = nextTag?.badgeUrl || prevTag?.badgeUrl || null;
-    const authorIcon = activeBadgeUrl || guildIcon || botAvatar;
+    const relevantTagForBadge =
+        (nextTag?.identityGuildId === String(guild.id) ? nextTag : null) ||
+        (prevTag?.identityGuildId === String(guild.id) ? prevTag : null) ||
+        nextTag ||
+        prevTag;
+    const authorIcon = relevantTagForBadge?.badgeUrl || guildIcon || botAvatar;
     const userAvatar = user.displayAvatarURL?.({ size: 256 }) || botAvatar;
-    const isThisGuildTag = Boolean(nextTag?.identityGuildId && nextTag.identityGuildId === guild.id);
 
     let embedColor = TAG_COLORS.INSTALLED;
-    let title = "🏷️ Server Tag Baru Terpasang";
-    let description = "";
-    let tagFieldLines = [];
+    let title = "🏷️ SERVER TAG DIPASANG!";
+    let activityLabel = "Memasang Server Tag";
+    let description = `<@${user.id}> (\`@${escapeInlineCode(user.username)}\`) memasang **Server Tag** baru.`;
+    const activityLines = [];
 
     if (actionType === "installed") {
         embedColor = TAG_COLORS.INSTALLED;
-        title = "🏷️ Server Tag Baru Terpasang";
-        description = isThisGuildTag
-            ? `Terima kasih <@${user.id}> telah menyematkan **Server Tag** komunitas **${escapeMarkdown(guild.name)}** pada profil Discord kamu!`
-            : `<@${user.id}> baru saja menyematkan **Server Tag** pada profil Discord-nya.`;
+        title = "🏷️ SERVER TAG DIPASANG!";
+        activityLabel = "Memasang Server Tag";
+        description = `<@${user.id}> (\`@${escapeInlineCode(user.username)}\`) memasang **Server Tag** di **${escapeMarkdown(guild.name)}**.`;
 
-        tagFieldLines = [
-            `• **Nama Tag:** \`${escapeInlineCode(nextTag.tag)}\`${nextTag.badgeUrl ? ` • [Lihat Badge](${nextTag.badgeUrl})` : ""}`,
-            `• **Status Tag:** 🟢 Aktif Terpasang`,
-            `• **Asal Tag:** ${resolveTagOriginLabel(client, guild, nextTag)}`,
-            `• **Waktu (WIB):** \`${wibText}\` (<t:${unixSec}:R>)`,
-        ];
-    } else if (actionType === "reinstalled") {
-        embedColor = TAG_COLORS.REINSTALLED;
-        title = "✨ Server Tag Dipasang Kembali";
-        description = isThisGuildTag
-            ? `Selamat datang kembali! <@${user.id}> kembali menyematkan **Server Tag** **${escapeMarkdown(guild.name)}** pada profil Discord-nya.`
-            : `<@${user.id}> kembali menyematkan **Server Tag** pada profil Discord-nya.`;
-
-        tagFieldLines = [
-            `• **Nama Tag:** \`${escapeInlineCode(nextTag.tag)}\`${nextTag.badgeUrl ? ` • [Lihat Badge](${nextTag.badgeUrl})` : ""}`,
-            `• **Status Tag:** 🟢 Aktif Kembali di Profil`,
-            `• **Asal Tag:** ${resolveTagOriginLabel(client, guild, nextTag)}`,
-            `• **Waktu (WIB):** \`${wibText}\` (<t:${unixSec}:R>)`,
-        ];
+        activityLines.push(`• **Jenis Aktivitas:** ${activityLabel}`);
+        if (nextTag?.tag) {
+            activityLines.push(
+                `• **Server Tag Baru:** \`[${escapeInlineCode(nextTag.tag)}]\`${nextTag.badgeUrl ? ` • [Badge](${nextTag.badgeUrl})` : ""}`,
+            );
+        }
+        activityLines.push(`• **Waktu:** \`${wibShort}\` (\`${wibFull}\` • <t:${unixSec}:R>)`);
     } else if (actionType === "changed") {
         embedColor = TAG_COLORS.CHANGED;
-        title = "🔄 Server Tag Diperbarui";
-        description = `<@${user.id}> baru saja mengganti **Server Tag** yang ditampilkan pada profil Discord-nya.`;
+        title = "🔄 SERVER TAG DIGANTI!";
+        activityLabel = "Mengganti Server Tag";
+        description = `<@${user.id}> (\`@${escapeInlineCode(user.username)}\`) mengganti **Server Tag** pada profil Discord-nya.`;
 
-        tagFieldLines = [
-            `• **Perubahan Tag:** \`${escapeInlineCode(prevTag.tag)}\` ➜ \`${escapeInlineCode(nextTag.tag)}\`${nextTag.badgeUrl ? ` • [Lihat Badge](${nextTag.badgeUrl})` : ""}`,
-            `• **Status Tag:** 🔵 Diperbarui & Aktif`,
-            `• **Asal Tag Baru:** ${resolveTagOriginLabel(client, guild, nextTag)}`,
-            `• **Waktu (WIB):** \`${wibText}\` (<t:${unixSec}:R>)`,
-        ];
+        activityLines.push(`• **Jenis Aktivitas:** ${activityLabel}`);
+        if (prevTag?.tag) {
+            activityLines.push(`• **Server Tag Lama:** \`[${escapeInlineCode(prevTag.tag)}]\``);
+        }
+        if (nextTag?.tag) {
+            activityLines.push(
+                `• **Server Tag Baru:** \`[${escapeInlineCode(nextTag.tag)}]\`${nextTag.badgeUrl ? ` • [Badge](${nextTag.badgeUrl})` : ""}`,
+            );
+        }
+        activityLines.push(`• **Waktu:** \`${wibShort}\` (\`${wibFull}\` • <t:${unixSec}:R>)`);
     } else if (actionType === "removed") {
         embedColor = TAG_COLORS.REMOVED;
-        title = "🔓 Server Tag Dilepas";
-        description = `<@${user.id}> telah melepas **Server Tag** dari tampilan profil Discord-nya.`;
+        title = "🗑️ SERVER TAG DIHAPUS!";
+        activityLabel = "Menghapus Server Tag";
+        description = `<@${user.id}> (\`@${escapeInlineCode(user.username)}\`) menghapus **Server Tag** dari profil Discord-nya.`;
 
-        tagFieldLines = [
-            `• **Tag Sebelumnya:** \`${escapeInlineCode(prevTag.tag)}\``,
-            `• **Status Tag:** ⚪ Tidak Aktif / Dilepas`,
-            `• **Asal Tag Sebelumnya:** ${resolveTagOriginLabel(client, guild, prevTag)}`,
-            `• **Waktu (WIB):** \`${wibText}\` (<t:${unixSec}:R>)`,
-        ];
+        activityLines.push(`• **Jenis Aktivitas:** ${activityLabel}`);
+        if (prevTag?.tag) {
+            activityLines.push(`• **Server Tag Lama:** \`[${escapeInlineCode(prevTag.tag)}]\``);
+        }
+        activityLines.push(`• **Waktu:** \`${wibShort}\` (\`${wibFull}\` • <t:${unixSec}:R>)`);
     }
 
-    const memberLines = [`• **Member:** <@${user.id}>`, `• **Username & ID:** \`@${escapeInlineCode(user.username)}\` (\`${user.id}\`)`];
-
-    if (member?.joinedTimestamp) {
-        memberLines.push(`• **Bergabung di Server:** <t:${Math.floor(member.joinedTimestamp / 1000)}:D>`);
-    }
-
-    memberLines.push(`• **Riwayat Aktivitas:** ${formatMemberHistorySummary(memberRecord, actionType)}`);
-
-    const totalInstalled = Number(guildStats?.totalInstalled) || 0;
-    const totalReinstalled = Number(guildStats?.totalReinstalled) || 0;
-    const totalChanged = Number(guildStats?.totalChanged) || 0;
-    const totalRemoved = Number(guildStats?.totalRemoved) || 0;
-    const activeTotal = Number(activeSummary?.totalActive) || 0;
-
-    const statsLines = [
-        `• **Total Pemasangan di Server:** \`${totalInstalled}\` kali${totalReinstalled > 0 ? ` *(termasuk \`${totalReinstalled}\` pasang kembali)*` : ""}`,
-        `• **Pergantian & Pelepasan:** \`${totalChanged}\` diganti • \`${totalRemoved}\` dilepas`,
-        `• **Member Bertag Saat Ini:** \`${activeTotal}\` member aktif terpantau`,
+    const serverMemberLines = [
+        `• **Server:** **${escapeMarkdown(guild.name)}**`,
+        `• **Server ID:** \`${guild.id}\``,
+        `• **Member:** <@${user.id}> (\`@${escapeInlineCode(user.username)}\`)`,
+        `• **User ID:** \`${user.id}\``,
     ];
+
+    const installedTotal = Number(statistics?.installed) || 0;
+    const changedTotal = Number(statistics?.changed) || 0;
+    const removedTotal = Number(statistics?.removed) || 0;
+
+    const statsLines = [`• **Dipasang:** \`${installedTotal}\` • **Diganti:** \`${changedTotal}\` • **Dihapus:** \`${removedTotal}\``];
 
     const embed = new EmbedBuilder()
         .setColor(embedColor)
         .setAuthor({
-            name: `${guild.name} • Pemantau Server Tag`,
+            name: `${guild.name} • Server Tag Logger`,
             iconURL: authorIcon || undefined,
         })
         .setTitle(title)
         .setDescription(description)
         .addFields(
             {
-                name: "🏷️ Informasi Server Tag",
-                value: tagFieldLines.join("\n"),
+                name: "🏷️ Informasi Aktivitas",
+                value: activityLines.join("\n"),
                 inline: false,
             },
             {
-                name: "👤 Informasi Member",
-                value: memberLines.join("\n"),
+                name: "🛡️ Informasi Server & Member",
+                value: serverMemberLines.join("\n"),
                 inline: false,
             },
             {
@@ -697,19 +838,20 @@ function logChannelWarningOnce(guildId, channelId, message) {
     Logger.warn(`[ServerTagLogger] ${message}`);
 }
 
-async function sendTagEmbedToLogChannel(client, guild, channelId, embed) {
-    if (!channelId) return false;
+async function sendTagEmbedToGuildLogChannel(client, guild, channelId, embed) {
+    if (!guild?.id || !channelId) return false;
 
-    let channel = guild.channels?.cache?.get?.(channelId) || client.channels?.cache?.get?.(channelId) || null;
+    let channel = guild.channels?.cache?.get?.(channelId) || null;
     if (!channel && typeof guild.channels?.fetch === "function") {
         channel = await guild.channels.fetch(channelId).catch(() => null);
     }
 
-    if (!channel) {
+    // Strict multi-server guard: never send to a channel belonging to another guild
+    if (!channel || (channel.guildId && String(channel.guildId) !== String(guild.id))) {
         logChannelWarningOnce(
             guild.id,
             channelId,
-            `Channel log (${channelId}) di server "${guild.name}" tidak ditemukan atau sudah dihapus.`,
+            `Channel log (${channelId}) pada server "${guild.name}" (${guild.id}) tidak ditemukan atau tidak valid.`,
         );
         return false;
     }
@@ -719,13 +861,17 @@ async function sendTagEmbedToLogChannel(client, guild, channelId, embed) {
         logChannelWarningOnce(
             guild.id,
             channelId,
-            `Tidak dapat mengirim log Server Tag ke #${channel.name || channelId} di "${guild.name}": ${check.code}`,
+            `Izin bot kurang pada channel #${channel.name || channelId} di server "${guild.name}" (${guild.id}): ${check.code}`,
         );
         return false;
     }
 
     const sent = await channel.send({ embeds: [embed] }).catch((err) => {
-        logChannelWarningOnce(guild.id, channelId, `Gagal mengirim embed Server Tag ke #${channel.name || channelId}: ${err.message}`);
+        logChannelWarningOnce(
+            guild.id,
+            channelId,
+            `Gagal mengirim log Server Tag ke #${channel.name || channelId} (${guild.id}): ${err.message}`,
+        );
         return null;
     });
 
@@ -733,45 +879,65 @@ async function sendTagEmbedToLogChannel(client, guild, channelId, embed) {
 }
 
 /**
- * Core per-guild member Server Tag transition evaluator.
- * Classifies into one of: "installed" | "changed" | "removed" | "reinstalled" | "baseline" | "no_change"
+ * Evaluates a member's Server Tag state strictly within the context of `guild` (`guild.id`).
+ * Multi-Server Isolation Guarantee:
+ * - Only logs an activity in `guild` when `prevTag.identityGuildId === guild.id` OR `nextTag.identityGuildId === guild.id`.
+ * - Never leaks Server A's tag events into Server B's log channel or statistics.
  */
 async function evaluateGuildMemberTag(client, guild, user, options = {}) {
     if (!client || !guild?.id || !user?.id || user.bot) {
         return { status: "ignored" };
     }
 
-    const guildData = await ensureGuildRecord(client, guild);
-    const tagConfig = guildData?.serverTagLog;
+    const guildId = String(guild.id);
+    const tagConfig = await ensureServerTagConfig(client, guild);
 
-    if (!tagConfig?.enabled || !tagConfig?.channelId) {
-        return { status: "disabled" };
-    }
-
-    return withMemberLock(guild.id, user.id, async () => {
+    return withMemberLock(guildId, user.id, async () => {
         const now = options.timestamp instanceof Date ? options.timestamp : new Date();
         const nextTag = extractActiveTag(user);
-        let existing = await getMemberTagRecord(client, guild.id, user.id);
 
-        // If this member has never been recorded yet:
-        // - If triggered by a live Gateway diff where non-partial oldUser existed and genuinely differed, seed from oldUser!
-        // - Otherwise (first passive sighting on messageCreate / guildMemberAdd), record baseline without false-positive spam!
+        // Dynamically learn/refresh this guild's own Server Tag whenever a member wears `identityGuildId === guildId`
+        if (nextTag && nextTag.identityGuildId === guildId) {
+            const latestCfg = await ensureServerTagConfig(client, guild);
+            if (latestCfg.detectedServerTag?.tag !== nextTag.tag || latestCfg.detectedServerTag?.badge !== nextTag.badge) {
+                await saveServerTagConfig(
+                    client,
+                    guildId,
+                    {
+                        ...latestCfg,
+                        detectedServerTag: {
+                            tag: nextTag.tag,
+                            badge: nextTag.badge || null,
+                            updatedAt: now,
+                        },
+                    },
+                    guild,
+                );
+            }
+        }
+
+        if (!tagConfig?.enabled || !tagConfig?.logChannelId) {
+            return { status: "disabled" };
+        }
+
+        let existing = await getMemberTagRecord(client, guildId, user.id);
+        const hasAuthoritativeOldUser = Boolean(options.oldUser && !options.oldUser.partial);
+        const authoritativeOldTag = hasAuthoritativeOldUser ? extractActiveTag(options.oldUser) : undefined;
+
         if (!existing) {
-            const oldUser = options.oldUser && !options.oldUser.partial ? options.oldUser : null;
-            const oldUserTag = oldUser ? extractActiveTag(oldUser) : undefined;
-            const hasVerifiedGatewayTransition = oldUser !== null && !isSameActiveTag(oldUserTag, nextTag);
+            const hasVerifiedGatewayDiff = hasAuthoritativeOldUser && !isSameActiveTag(authoritativeOldTag, nextTag);
 
-            if (!hasVerifiedGatewayTransition) {
+            if (!hasVerifiedGatewayDiff) {
                 const seeded = await saveMemberTagRecord(client, {
-                    guildId: guild.id,
+                    guildId,
                     userId: user.id,
                     username: user.username || null,
                     currentTag: nextTag,
                     installCount: 0,
                     changeCount: 0,
                     removeCount: 0,
-                    hadTagBefore: Boolean(nextTag),
-                    firstInstalledAt: nextTag ? now : null,
+                    hadTagBefore: Boolean(nextTag && nextTag.identityGuildId === guildId),
+                    firstInstalledAt: nextTag && nextTag.identityGuildId === guildId ? now : null,
                     lastAction: "baseline",
                     lastUpdatedAt: now,
                     history: [],
@@ -781,45 +947,70 @@ async function evaluateGuildMemberTag(client, guild, user, options = {}) {
             }
 
             existing = {
-                guildId: guild.id,
+                guildId,
                 userId: user.id,
-                username: oldUser.username || user.username || null,
-                currentTag: toStoredTagObject(oldUserTag),
+                username: options.oldUser.username || user.username || null,
+                currentTag: toStoredTagObject(authoritativeOldTag),
                 installCount: 0,
                 changeCount: 0,
                 removeCount: 0,
-                hadTagBefore: Boolean(oldUserTag),
-                firstInstalledAt: oldUserTag ? now : null,
+                hadTagBefore: Boolean(authoritativeOldTag && authoritativeOldTag.identityGuildId === guildId),
+                firstInstalledAt: authoritativeOldTag && authoritativeOldTag.identityGuildId === guildId ? now : null,
                 lastAction: "baseline",
                 lastUpdatedAt: now,
                 history: [],
             };
         }
 
-        const prevTag = normalizeStoredTag(existing.currentTag);
+        const storedPrevTag = normalizeStoredTag(existing.currentTag);
 
-        if (isSameActiveTag(prevTag, nextTag)) {
+        // Dedup guard: if stored state already matches `nextTag`, this transition was already processed
+        if (isSameActiveTag(storedPrevTag, nextTag)) {
             return { status: "no_change", memberRecord: existing };
         }
 
-        // Determine exact activity type among the 4 supported Server Tag transitions
+        // Use authoritative `oldUser` tag when available so unseen external changes never cause stale transitions
+        const prevTag = hasAuthoritativeOldUser ? authoritativeOldTag : storedPrevTag;
+
+        if (isSameActiveTag(prevTag, nextTag)) {
+            const synced = await saveMemberTagRecord(client, {
+                ...existing,
+                username: user.username || existing.username || null,
+                currentTag: nextTag,
+                lastUpdatedAt: now,
+            });
+            return { status: "no_change", memberRecord: synced };
+        }
+
+        // MULTI-SERVER ISOLATION RULE:
+        // Only emit logs & count statistics for `guildId` if either the previous tag OR the new tag belongs to `guildId`.
+        const prevBelongsToGuild = Boolean(prevTag && prevTag.identityGuildId === guildId);
+        const nextBelongsToGuild = Boolean(nextTag && nextTag.identityGuildId === guildId);
+        const involvesThisGuild = prevBelongsToGuild || nextBelongsToGuild;
+
+        if (!involvesThisGuild) {
+            // Silently keep member's currentTag snapshot accurate without logging or touching statistics in unrelated servers
+            const updatedSilent = await saveMemberTagRecord(client, {
+                ...existing,
+                username: user.username || existing.username || null,
+                currentTag: nextTag,
+                lastUpdatedAt: now,
+            });
+            return { status: "unrelated_guild", memberRecord: updatedSilent };
+        }
+
         let actionType = null;
         let installCount = Number(existing.installCount) || 0;
         let changeCount = Number(existing.changeCount) || 0;
         let removeCount = Number(existing.removeCount) || 0;
-        const hadPriorHistory = Boolean(existing.hadTagBefore || installCount > 0 || removeCount > 0 || changeCount > 0);
 
-        if (!prevTag && nextTag) {
-            if (hadPriorHistory) {
-                actionType = "reinstalled";
-            } else {
-                actionType = "installed";
-            }
+        if (!prevTag && nextTag && nextBelongsToGuild) {
+            actionType = "installed";
             installCount += 1;
         } else if (prevTag && nextTag) {
             actionType = "changed";
             changeCount += 1;
-        } else if (prevTag && !nextTag) {
+        } else if (prevTag && !nextTag && prevBelongsToGuild) {
             actionType = "removed";
             removeCount += 1;
         }
@@ -839,30 +1030,28 @@ async function evaluateGuildMemberTag(client, guild, user, options = {}) {
 
         const updatedMemberRecord = await saveMemberTagRecord(client, {
             ...existing,
-            guildId: guild.id,
+            guildId,
             userId: user.id,
             username: user.username || existing.username || null,
             currentTag: nextTag,
             installCount,
             changeCount,
             removeCount,
-            hadTagBefore: Boolean(hadPriorHistory || prevTag || nextTag),
-            firstInstalledAt: existing.firstInstalledAt || (nextTag ? now : null),
+            hadTagBefore: Boolean(existing.hadTagBefore || prevBelongsToGuild || nextBelongsToGuild),
+            firstInstalledAt: existing.firstInstalledAt || (nextBelongsToGuild ? now : null),
             lastAction: actionType,
             lastUpdatedAt: now,
             history: [historyEntry, ...(Array.isArray(existing.history) ? existing.history : [])].slice(0, MAX_MEMBER_HISTORY),
         });
 
-        // Re-fetch latest guildData inside lock before incrementing stats
-        const latestGuildData = await ensureGuildRecord(client, guild);
-        const latestTagLog = latestGuildData.serverTagLog || {};
-        const prevStats = latestTagLog.stats || {};
+        // Re-read latest guild config inside lock & increment isolated statistics for THIS guildId only
+        const latestConfig = await ensureServerTagConfig(client, guild);
+        const prevStats = latestConfig.statistics || { installed: 0, changed: 0, removed: 0 };
 
-        const nextStats = {
-            totalInstalled: (Number(prevStats.totalInstalled) || 0) + (actionType === "installed" || actionType === "reinstalled" ? 1 : 0),
-            totalChanged: (Number(prevStats.totalChanged) || 0) + (actionType === "changed" ? 1 : 0),
-            totalRemoved: (Number(prevStats.totalRemoved) || 0) + (actionType === "removed" ? 1 : 0),
-            totalReinstalled: (Number(prevStats.totalReinstalled) || 0) + (actionType === "reinstalled" ? 1 : 0),
+        const nextStatistics = {
+            installed: (Number(prevStats.installed) || 0) + (actionType === "installed" ? 1 : 0),
+            changed: (Number(prevStats.changed) || 0) + (actionType === "changed" ? 1 : 0),
+            removed: (Number(prevStats.removed) || 0) + (actionType === "removed" ? 1 : 0),
         };
 
         const guildHistoryItem = {
@@ -871,72 +1060,129 @@ async function evaluateGuildMemberTag(client, guild, user, options = {}) {
             action: actionType,
             previousTag: prevTag ? prevTag.tag : null,
             newTag: nextTag ? nextTag.tag : null,
-            tagGuildId: nextTag?.identityGuildId || prevTag?.identityGuildId || null,
             timestamp: now.toISOString(),
         };
 
-        const nextRecentHistory = [
-            guildHistoryItem,
-            ...(Array.isArray(latestTagLog.recentHistory) ? latestTagLog.recentHistory : []),
-        ].slice(0, MAX_GUILD_RECENT_HISTORY);
+        const nextDetectedServerTag =
+            nextBelongsToGuild && nextTag
+                ? {
+                      tag: nextTag.tag,
+                      badge: nextTag.badge || null,
+                      updatedAt: now,
+                  }
+                : prevBelongsToGuild && prevTag && !latestConfig.detectedServerTag?.tag
+                  ? {
+                        tag: prevTag.tag,
+                        badge: prevTag.badge || null,
+                        updatedAt: now,
+                    }
+                  : latestConfig.detectedServerTag;
 
-        const savedGuildTagLog = await persistGuildServerTagLog(client, guild, {
-            ...latestTagLog,
-            stats: nextStats,
-            recentHistory: nextRecentHistory,
-        });
-
-        const member =
-            options.member ||
-            guild.members?.cache?.get?.(user.id) ||
-            (hasServerMembersIntent(client) && typeof guild.members?.fetch === "function"
-                ? await guild.members.fetch(user.id).catch(() => null)
-                : null);
-
-        const activeSummary = await countActiveTaggedMembers(client, guild.id);
+        const savedConfig = await saveServerTagConfig(
+            client,
+            guildId,
+            {
+                ...latestConfig,
+                guildName: guild.name || latestConfig.guildName,
+                detectedServerTag: nextDetectedServerTag,
+                statistics: nextStatistics,
+                recentHistory: [guildHistoryItem, ...(Array.isArray(latestConfig.recentHistory) ? latestConfig.recentHistory : [])].slice(
+                    0,
+                    MAX_GUILD_RECENT_HISTORY,
+                ),
+            },
+            guild,
+        );
 
         const embed = buildServerTagActivityEmbed({
             client,
             guild,
             user,
-            member,
             actionType,
             prevTag,
             nextTag,
-            memberRecord: updatedMemberRecord,
-            guildStats: savedGuildTagLog.stats,
-            activeSummary,
+            statistics: savedConfig.statistics,
             timestamp: now,
         });
 
-        const sent = await sendTagEmbedToLogChannel(client, guild, savedGuildTagLog.channelId, embed);
+        const sent = await sendTagEmbedToGuildLogChannel(client, guild, savedConfig.logChannelId, embed);
 
         return {
             status: actionType,
             sent,
             embed,
             memberRecord: updatedMemberRecord,
-            guildStats: savedGuildTagLog.stats,
+            statistics: savedConfig.statistics,
         };
     });
 }
 
 /**
- * Handles official Discord Gateway `userUpdate(oldUser, newUser)` event across all configured guilds.
+ * Finds guild IDs where `userId` previously had a stored active tag (used when `oldUser` was partial).
+ */
+async function findStoredGuildIdsForUser(client, userId) {
+    const uId = String(userId);
+    const guildIds = new Set();
+
+    for (const [key, val] of client.data.entries()) {
+        if (!key.startsWith("tagMember_") || !key.endsWith(`_${uId}`)) continue;
+        if (val?.currentTag?.identityEnabled && val?.guildId) {
+            guildIds.add(String(val.guildId));
+        }
+    }
+
+    if (isMongoReady()) {
+        const MemberModel = getMemberModel(client);
+        const docs = await MemberModel.find({ userId: uId, "currentTag.identityEnabled": true }, { guildId: 1, currentTag: 1 })
+            .lean()
+            .catch(() => null);
+
+        if (Array.isArray(docs)) {
+            for (const d of docs) {
+                if (d?.guildId) guildIds.add(String(d.guildId));
+            }
+        }
+    }
+
+    return guildIds;
+}
+
+/**
+ * Handles official Discord Gateway `userUpdate(oldUser, newUser)` with strict multi-server routing:
+ * Only targets guilds directly matching `oldTag.identityGuildId`, `newTag.identityGuildId`, or stored active tag records.
  */
 async function handleUserTagUpdate(client, oldUser, newUser) {
     if (!newUser || newUser.bot) return;
 
-    // Fast-path: if oldUser was non-partial and primaryGuild didn't change at all, skip unless needed
-    if (oldUser && !oldUser.partial) {
-        const oldTag = extractActiveTag(oldUser);
-        const newTag = extractActiveTag(newUser);
-        if (isSameActiveTag(oldTag, newTag)) return;
+    const hasFullOldUser = Boolean(oldUser && !oldUser.partial);
+    const oldTag = hasFullOldUser ? extractActiveTag(oldUser) : undefined;
+    const newTag = extractActiveTag(newUser);
+
+    if (hasFullOldUser && isSameActiveTag(oldTag, newTag)) {
+        return;
     }
 
-    for (const [, guild] of client.guilds.cache) {
-        const cachedGuildData = client.data.get(`guildData_${guild.id}`);
-        if (cachedGuildData && !cachedGuildData.serverTagLog?.enabled) continue;
+    const candidateGuildIds = new Set();
+
+    if (newTag?.identityGuildId && client.guilds.cache.has(newTag.identityGuildId)) {
+        candidateGuildIds.add(String(newTag.identityGuildId));
+    }
+
+    if (oldTag?.identityGuildId && client.guilds.cache.has(oldTag.identityGuildId)) {
+        candidateGuildIds.add(String(oldTag.identityGuildId));
+    }
+
+    // Also include guilds where this user had an active stored tag record so partial-oldUser removals & state sync stay exact
+    const storedGuildIds = await findStoredGuildIdsForUser(client, newUser.id);
+    for (const gId of storedGuildIds) {
+        if (client.guilds.cache.has(gId)) {
+            candidateGuildIds.add(gId);
+        }
+    }
+
+    for (const guildId of candidateGuildIds) {
+        const guild = client.guilds.cache.get(guildId);
+        if (!guild) continue;
 
         let member = guild.members?.cache?.get?.(newUser.id) || null;
         if (!member && hasServerMembersIntent(client) && typeof guild.members?.fetch === "function") {
@@ -946,100 +1192,156 @@ async function handleUserTagUpdate(client, oldUser, newUser) {
         if (!member) continue;
 
         await evaluateGuildMemberTag(client, guild, newUser, {
-            oldUser,
+            oldUser: hasFullOldUser ? oldUser : null,
             member,
         }).catch((err) => {
-            Logger.error(`[ServerTagLogger] Gagal memproses userUpdate di server ${guild.id}:`, err);
+            Logger.error(`[ServerTagLogger] Gagal memproses perubahan tag pada server ${guildId}:`, err);
         });
     }
 }
 
 /**
- * Handles official Discord Gateway `guildMemberUpdate(oldMember, newMember)` event.
- * Catches updates even when the user wasn't previously in `client.users.cache`.
+ * Handles official Discord Gateway `guildMemberUpdate(oldMember, newMember)` scoped strictly to `newMember.guild`.
  */
 async function handleGuildMemberTagUpdate(client, oldMember, newMember) {
     const guild = newMember?.guild || oldMember?.guild;
     const user = newMember?.user;
-    if (!guild || !user || user.bot) return;
+    if (!guild?.id || !user?.id || user.bot) return;
 
-    const cachedGuildData = client.data.get(`guildData_${guild.id}`);
-    if (cachedGuildData && !cachedGuildData.serverTagLog?.enabled) return;
+    const config = await ensureServerTagConfig(client, guild);
+    if (!config?.enabled || !config?.logChannelId) {
+        // Still allow dynamic tag discovery if member wears this guild's own tag
+        const active = extractActiveTag(user);
+        if (active && active.identityGuildId === String(guild.id) && config.detectedServerTag?.tag !== active.tag) {
+            await saveServerTagConfig(
+                client,
+                guild.id,
+                {
+                    ...config,
+                    detectedServerTag: {
+                        tag: active.tag,
+                        badge: active.badge || null,
+                        updatedAt: new Date(),
+                    },
+                },
+                guild,
+            );
+        }
+        return;
+    }
 
+    // Note: in discord.js, `oldMember.user` is the same User reference mutated by UserUpdateAction,
+    // so we do NOT pass `oldMember.user` as `oldUser`; stored per-guild state handles uncached transitions cleanly.
     await evaluateGuildMemberTag(client, guild, user, {
-        oldUser: oldMember && !oldMember.partial ? oldMember.user : null,
+        oldUser: null,
         member: newMember,
     }).catch((err) => {
-        Logger.error(`[ServerTagLogger] Gagal memproses guildMemberUpdate di server ${guild.id}:`, err);
+        Logger.error(`[ServerTagLogger] Gagal memproses guildMemberUpdate pada server ${guild.id}:`, err);
     });
 }
 
 /**
- * Passive observation helper called on `guildMemberAdd`, `messageCreate`, `interactionCreate`, and `voiceStateUpdate`.
- * Seeds unseen members safely and detects tag transitions if `Server Members Intent` is disabled.
+ * Passive per-guild observation on `guildMemberAdd`, `messageCreate`, `interactionCreate`, and `voiceStateUpdate`.
  */
 async function handlePassiveMemberObservation(client, guild, user, member = null) {
     if (!guild?.id || !user?.id || user.bot) return;
 
-    const cachedGuildData = client.data.get(`guildData_${guild.id}`);
-    if (!cachedGuildData?.serverTagLog?.enabled || !cachedGuildData?.serverTagLog?.channelId) return;
+    const cachedConfig = client.data.get(getConfigCacheKey(guild.id));
+    if (cachedConfig && (!cachedConfig.enabled || !cachedConfig.logChannelId)) {
+        const active = extractActiveTag(user);
+        if (active && active.identityGuildId === String(guild.id) && cachedConfig.detectedServerTag?.tag !== active.tag) {
+            await saveServerTagConfig(
+                client,
+                guild.id,
+                {
+                    ...cachedConfig,
+                    detectedServerTag: {
+                        tag: active.tag,
+                        badge: active.badge || null,
+                        updatedAt: new Date(),
+                    },
+                },
+                guild,
+            ).catch(() => {});
+        }
+        return;
+    }
 
     await evaluateGuildMemberTag(client, guild, user, {
+        oldUser: null,
         member: member || guild.members?.cache?.get?.(user.id) || null,
     }).catch(() => {});
 }
 
 /**
- * Initializes baseline member Server Tag states on `clientReady` for all guilds with active `/setlogs`.
+ * Initializes Server Tag Logger configs & baselines across all joined servers on `clientReady`.
  */
 async function initializeServerTagLogger(client) {
     if (!client?.guilds?.cache) return;
 
     for (const [, guild] of client.guilds.cache) {
-        const guildData = await ensureGuildRecord(client, guild).catch(() => null);
-        if (!guildData?.serverTagLog?.enabled || !guildData?.serverTagLog?.channelId) continue;
-
-        await syncGuildMemberTagsBaseline(client, guild).catch((err) => {
-            Logger.debug(`[ServerTagLogger] Lewati baseline awal untuk server ${guild.name}: ${err.message}`);
+        await initializeGuildServerTag(client, guild).catch((err) => {
+            Logger.debug(`[ServerTagLogger] Inisialisasi awal dilewati untuk server ${guild.id}: ${err.message}`);
         });
     }
 }
 
+/**
+ * Returns an isolated snapshot of Server Tag Logger configuration & statistics strictly for `guild`.
+ */
 async function getServerTagStatsSnapshot(client, guild, targetUser = null) {
-    const guildData = await ensureGuildRecord(client, guild);
-    const tagLog = guildData.serverTagLog || {};
-    const stats = tagLog.stats || {
-        totalInstalled: 0,
-        totalChanged: 0,
-        totalRemoved: 0,
-        totalReinstalled: 0,
-    };
-    const activeSummary = await countActiveTaggedMembers(client, guild.id);
+    const guildId = String(guild.id);
+    const config = await ensureServerTagConfig(client, guild);
+
+    // Refresh detected tag from cached members if not yet recorded
+    let detectedTag = config.detectedServerTag?.tag || null;
+    if (!detectedTag) {
+        const discovered = detectGuildOwnTagFromMembers(guild, guild.members?.cache);
+        if (discovered?.tag) {
+            detectedTag = discovered.tag;
+            await saveServerTagConfig(
+                client,
+                guildId,
+                {
+                    ...config,
+                    detectedServerTag: discovered,
+                },
+                guild,
+            );
+        }
+    }
+
+    const activeOwnTagMembers = await countGuildOwnTaggedMembers(client, guildId);
+    const hasGuildTagsFeature = Array.isArray(guild.features) && guild.features.includes("GUILD_TAGS");
 
     let memberDetail = null;
     if (targetUser) {
-        const record = await getMemberTagRecord(client, guild.id, targetUser.id);
+        const record = await getMemberTagRecord(client, guildId, targetUser.id);
         const liveTag = extractActiveTag(targetUser);
         memberDetail = {
             user: targetUser,
             liveTag,
+            wearsThisGuildTag: Boolean(liveTag && liveTag.identityGuildId === guildId),
             record,
         };
     }
 
     return {
-        enabled: Boolean(tagLog.enabled && tagLog.channelId),
-        channelId: tagLog.channelId || null,
-        updatedBy: tagLog.updatedBy || null,
-        updatedAt: tagLog.updatedAt || null,
-        stats: {
-            totalInstalled: Number(stats.totalInstalled) || 0,
-            totalChanged: Number(stats.totalChanged) || 0,
-            totalRemoved: Number(stats.totalRemoved) || 0,
-            totalReinstalled: Number(stats.totalReinstalled) || 0,
+        guildId,
+        guildName: guild.name,
+        enabled: Boolean(config.enabled && config.logChannelId),
+        logChannelId: config.logChannelId || null,
+        detectedServerTag: detectedTag,
+        hasGuildTagsFeature,
+        updatedBy: config.updatedBy || null,
+        updatedAt: config.updatedAt || null,
+        statistics: {
+            installed: Number(config.statistics?.installed) || 0,
+            changed: Number(config.statistics?.changed) || 0,
+            removed: Number(config.statistics?.removed) || 0,
         },
-        activeSummary,
-        recentHistory: Array.isArray(tagLog.recentHistory) ? tagLog.recentHistory : [],
+        activeOwnTagMembers,
+        recentHistory: Array.isArray(config.recentHistory) ? config.recentHistory : [],
         memberDetail,
     };
 }
@@ -1051,16 +1353,19 @@ module.exports = {
     hasServerMembersIntent,
     hasAdminPermission,
     buildAdminDeniedEmbed,
+    formatWibTimeShort,
     formatWibDateTime,
     extractActiveTag,
     isSameActiveTag,
+    detectGuildOwnTagFromMembers,
     validateLogChannel,
-    ensureGuildRecord,
+    ensureServerTagConfig,
     setServerTagLogChannel,
     resetServerTagLogChannel,
     getMemberTagRecord,
-    countActiveTaggedMembers,
+    countGuildOwnTaggedMembers,
     syncGuildMemberTagsBaseline,
+    initializeGuildServerTag,
     buildServerTagActivityEmbed,
     evaluateGuildMemberTag,
     handleUserTagUpdate,

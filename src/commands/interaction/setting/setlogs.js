@@ -1,4 +1,4 @@
-const { ApplicationCommandOptionType, ChannelType, EmbedBuilder, MessageFlags } = require("discord.js");
+const { ApplicationCommandOptionType, ChannelType, EmbedBuilder, MessageFlags, escapeMarkdown } = require("discord.js");
 const {
     TAG_COLORS,
     FOOTER_TEXT,
@@ -9,15 +9,19 @@ const {
     setServerTagLogChannel,
 } = require("../../../functions/serverTagLogger.js");
 
+function escapeInline(value) {
+    return String(value ?? "").replace(/`/g, "ˋ");
+}
+
 module.exports = {
     name: "setlogs",
-    description: "Atur channel teks untuk menerima notifikasi Server Tag Logger",
+    description: "Atur channel log Server Tag untuk server ini",
     category: "setting",
     locale: "id",
     options: [
         {
             name: "channel",
-            description: "Pilih channel teks tujuan pengiriman log Server Tag",
+            description: "Pilih channel teks tujuan pengiriman log Server Tag di server ini",
             type: ApplicationCommandOptionType.Channel,
             channel_types: [ChannelType.GuildText, ChannelType.GuildAnnouncement],
             required: true,
@@ -41,7 +45,8 @@ module.exports = {
 
         await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
-        const guild = interaction.guild;
+        const guildId = interaction.guildId;
+        const guild = interaction.guild || client.guilds.cache.get(guildId);
         const targetChannel = interaction.options.getChannel("channel");
         const botAvatar = client.user?.displayAvatarURL?.({ size: 128 }) || undefined;
 
@@ -57,19 +62,24 @@ module.exports = {
             return interaction.editReply({ embeds: [errorEmbed] });
         }
 
-        const { syncedCount } = await setServerTagLogChannel(client, guild, targetChannel.id, interaction.user.id);
+        const { syncedCount, detectedTag } = await setServerTagLogChannel(client, guild, targetChannel.id, interaction.user.id);
         const realTimeIntent = hasServerMembersIntent(client);
+        const tagInfo = detectedTag
+            ? `\`[${escapeInline(detectedTag)}]\` *(terdeteksi otomatis)*`
+            : "`Otomatis (terdeteksi saat member memakai tag server ini)`";
 
         const detailLines = [
+            `• **Server:** **${escapeMarkdown(guild.name)}** (\`${guildId}\`)`,
+            `• **Server Tag:** ${tagInfo}`,
             `• **Status Fitur:** 🟢 Aktif`,
-            `• **Channel Tujuan:** <#${targetChannel.id}> (\`${targetChannel.id}\`)`,
+            `• **Channel Log:** <#${targetChannel.id}> (\`${targetChannel.id}\`)`,
             `• **Diatur Oleh:** <@${interaction.user.id}>`,
-            `• **Izin Bot di Channel:** ✅ \`ViewChannel\`, \`SendMessages\`, \`EmbedLinks\``,
-            `• **Sinkronisasi Awal:** \`${syncedCount}\` data member berhasil dipetakan`,
-            `• **Mode Deteksi Gateway:** ${
+            `• **Izin Bot:** ✅ \`ViewChannel\`, \`SendMessages\`, \`EmbedLinks\``,
+            `• **Sinkronisasi Member:** \`${syncedCount}\` member dipetakan`,
+            `• **Mode Deteksi:** ${
                 realTimeIntent
                     ? "⚡ Real-Time (`Server Members Intent` aktif)"
-                    : "⚠️ Mode Kompatibilitas — aktifkan **SERVER MEMBERS INTENT** di Discord Developer Portal agar perubahan tag terdeteksi secara real-time"
+                    : "⚠️ Mode Kompatibilitas — aktifkan **SERVER MEMBERS INTENT** di Discord Developer Portal untuk deteksi real-time"
             }`,
         ];
 
@@ -81,10 +91,10 @@ module.exports = {
             })
             .setTitle("✅ Channel Server Tag Logger Berhasil Diatur")
             .setDescription(
-                `Notifikasi aktivitas pemasangan, penggantian, pelepasan, dan pemasangan kembali **Server Tag** di server ini sekarang akan dikirim otomatis ke <#${targetChannel.id}>.`,
+                `Konfigurasi log **Server Tag** khusus untuk server **${escapeMarkdown(guild.name)}** berhasil disimpan. Seluruh aktivitas pemasangan, penggantian, dan penghapusan tag server ini akan dikirim ke <#${targetChannel.id}>.`,
             )
             .addFields({
-                name: "⚙️ Ringkasan Pengaturan",
+                name: "⚙️ Konfigurasi Server Ini",
                 value: detailLines.join("\n"),
                 inline: false,
             })

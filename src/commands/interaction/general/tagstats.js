@@ -5,12 +5,10 @@ function formatActionBadge(action) {
     switch (action) {
         case "installed":
             return "🏷️ Memasang";
-        case "reinstalled":
-            return "✨ Memasang Kembali";
         case "changed":
             return "🔄 Mengganti";
         case "removed":
-            return "🔓 Melepas";
+            return "🗑️ Menghapus";
         default:
             return "📌 Aktivitas";
     }
@@ -22,13 +20,13 @@ function escapeInline(value) {
 
 module.exports = {
     name: "tagstats",
-    description: "Tampilkan statistik aktivitas Server Tag di server ini",
+    description: "Lihat statistik Server Tag untuk server ini",
     category: "general",
     locale: "id",
     options: [
         {
             name: "member",
-            description: "Lihat detail status dan riwayat Server Tag milik member tertentu (opsional)",
+            description: "Lihat detail riwayat Server Tag milik member tertentu di server ini (opsional)",
             type: ApplicationCommandOptionType.User,
             required: false,
         },
@@ -46,7 +44,8 @@ module.exports = {
     run: async (client, interaction) => {
         await interaction.deferReply();
 
-        const guild = interaction.guild;
+        const guildId = interaction.guildId;
+        const guild = interaction.guild || client.guilds.cache.get(guildId);
         const targetUser = interaction.options.getUser("member");
         const botAvatar = client.user?.displayAvatarURL?.({ size: 128 }) || undefined;
         const guildIcon = guild.iconURL?.({ size: 128 }) || botAvatar;
@@ -54,29 +53,31 @@ module.exports = {
         const snapshot = await getServerTagStatsSnapshot(client, guild, targetUser);
 
         if (targetUser && snapshot.memberDetail) {
-            const { liveTag, record } = snapshot.memberDetail;
+            const { liveTag, wearsThisGuildTag, record } = snapshot.memberDetail;
             const installs = Number(record?.installCount) || 0;
             const changes = Number(record?.changeCount) || 0;
             const removes = Number(record?.removeCount) || 0;
             const memberHistory = Array.isArray(record?.history) ? record.history.slice(0, 5) : [];
 
-            const activeTagLines = liveTag
+            const activeTagLines = wearsThisGuildTag
                 ? [
-                      `• **Status Saat Ini:** 🟢 Aktif (\`${escapeInline(liveTag.tag)}\`)`,
-                      `• **Asal Tag:** ${
-                          liveTag.identityGuildId === guild.id
-                              ? `Server Ini (**${escapeMarkdown(guild.name)}**)`
-                              : liveTag.identityGuildId
-                                ? `Server ID \`${liveTag.identityGuildId}\``
-                                : "`Profil Discord`"
-                      }`,
+                      `• **Status Tag Server Ini:** 🟢 Aktif memakai \`[${escapeInline(liveTag.tag)}]\``,
+                      `• **Server:** **${escapeMarkdown(guild.name)}** (\`${guildId}\`)`,
                   ]
-                : ["• **Status Saat Ini:** ⚪ Tidak sedang memasang Server Tag"];
+                : liveTag
+                  ? [
+                        `• **Status Tag Server Ini:** ⚪ Tidak memakai tag server ini *(sedang memakai \`[${escapeInline(liveTag.tag)}]\`)*`,
+                        `• **Server:** **${escapeMarkdown(guild.name)}** (\`${guildId}\`)`,
+                    ]
+                  : [
+                        `• **Status Tag Server Ini:** ⚪ Tidak sedang memasang Server Tag`,
+                        `• **Server:** **${escapeMarkdown(guild.name)}** (\`${guildId}\`)`,
+                    ];
 
             const counterLines = [
-                `• **Total Pemasangan:** \`${installs}\` kali`,
-                `• **Total Penggantian:** \`${changes}\` kali`,
-                `• **Total Pelepasan:** \`${removes}\` kali`,
+                `• **Dipasang:** \`${installs}\` kali`,
+                `• **Diganti:** \`${changes}\` kali`,
+                `• **Dihapus:** \`${removes}\` kali`,
             ];
 
             const recentMemberLines =
@@ -85,34 +86,36 @@ module.exports = {
                           const unix = item.timestamp ? Math.floor(new Date(item.timestamp).getTime() / 1000) : null;
                           const tagDesc =
                               item.action === "changed"
-                                  ? `\`${escapeInline(item.previousTag || "-")}\` ➜ \`${escapeInline(item.newTag || "-")}\``
-                                  : `\`${escapeInline(item.newTag || item.previousTag || "-")}\``;
+                                  ? `\`[${escapeInline(item.previousTag || "-")}]\` ➜ \`[${escapeInline(item.newTag || "-")}]\``
+                                  : `\`[${escapeInline(item.newTag || item.previousTag || "-")}]\``;
                           return `• ${formatActionBadge(item.action)} ${tagDesc}${unix ? ` • <t:${unix}:R>` : ""}`;
                       })
-                    : ["*Belum ada riwayat perubahan Server Tag yang tercatat untuk member ini.*"];
+                    : ["*Belum ada riwayat aktivitas Server Tag pada server ini untuk member tersebut.*"];
 
             const memberEmbed = new EmbedBuilder()
                 .setColor(TAG_COLORS.INFO)
                 .setAuthor({
                     name: `${guild.name} • Statistik Server Tag Member`,
-                    iconURL: liveTag?.badgeUrl || guildIcon,
+                    iconURL: (wearsThisGuildTag ? liveTag?.badgeUrl : null) || guildIcon,
                 })
                 .setTitle(`📊 Statistik Server Tag — @${targetUser.username}`)
                 .setThumbnail(targetUser.displayAvatarURL?.({ size: 256 }) || botAvatar)
-                .setDescription(` Ringkasan status dan riwayat aktivitas **Server Tag** untuk <@${targetUser.id}> di server ini.`)
+                .setDescription(
+                    `Ringkasan status dan riwayat **Server Tag** untuk <@${targetUser.id}> pada server **${escapeMarkdown(guild.name)}**.`,
+                )
                 .addFields(
                     {
-                        name: "🏷️ Status Tag Profil",
+                        name: "🏷️ Status Tag Saat Ini",
                         value: activeTagLines.join("\n"),
                         inline: false,
                     },
                     {
-                        name: "📈 Akumulasi Aktivitas Member",
+                        name: "📈 Statistik Member di Server Ini",
                         value: counterLines.join("\n"),
                         inline: false,
                     },
                     {
-                        name: "🕒 Riwayat Terakhir",
+                        name: "🕒 Riwayat Terakhir di Server Ini",
                         value: recentMemberLines.join("\n"),
                         inline: false,
                     },
@@ -123,24 +126,27 @@ module.exports = {
             return interaction.editReply({ embeds: [memberEmbed] });
         }
 
-        const totalEvents = snapshot.stats.totalInstalled + snapshot.stats.totalChanged + snapshot.stats.totalRemoved;
+        const totalEvents = snapshot.statistics.installed + snapshot.statistics.changed + snapshot.statistics.removed;
+        const serverTagDisplay = snapshot.detectedServerTag
+            ? `\`[${escapeInline(snapshot.detectedServerTag)}]\``
+            : "`Belum terdeteksi (otomatis muncul saat ada member memakai tag server ini)`";
 
         const overviewLines = [
+            `• **Server:** **${escapeMarkdown(guild.name)}** (\`${guildId}\`)`,
+            `• **Server Tag:** ${serverTagDisplay}`,
             `• **Status Logger:** ${
-                snapshot.enabled && snapshot.channelId
-                    ? `🟢 Aktif di <#${snapshot.channelId}>`
+                snapshot.enabled && snapshot.logChannelId
+                    ? `🟢 Aktif di <#${snapshot.logChannelId}>`
                     : "🔴 Belum Diaktifkan *(atur dengan `/setlogs`)*"
             }`,
-            `• **Member Bertag Aktif:** \`${snapshot.activeSummary.totalActive}\` member terpantau (\`${snapshot.activeSummary.sameServerActive}\` tag server ini • \`${snapshot.activeSummary.externalServerActive}\` tag lain)`,
+            `• **Member Aktif Pemakai Tag Server Ini:** \`${snapshot.activeOwnTagMembers}\` member`,
         ];
 
         const counterLines = [
-            `• **Total Pemasangan Tag:** \`${snapshot.stats.totalInstalled}\` kali${
-                snapshot.stats.totalReinstalled > 0 ? ` *(termasuk \`${snapshot.stats.totalReinstalled}\` pemasangan kembali)*` : ""
-            }`,
-            `• **Total Penggantian Tag:** \`${snapshot.stats.totalChanged}\` kali`,
-            `• **Total Penghapusan Tag:** \`${snapshot.stats.totalRemoved}\` kali`,
-            `• **Total Aktivitas Tercatat:** \`${totalEvents}\` aktivitas`,
+            `• **Total Dipasang:** \`${snapshot.statistics.installed}\` kali`,
+            `• **Total Diganti:** \`${snapshot.statistics.changed}\` kali`,
+            `• **Total Dihapus:** \`${snapshot.statistics.removed}\` kali`,
+            `• **Total Seluruh Aktivitas:** \`${totalEvents}\` aktivitas`,
         ];
 
         const recentItems = snapshot.recentHistory.slice(0, 5);
@@ -150,11 +156,11 @@ module.exports = {
                       const unix = entry.timestamp ? Math.floor(new Date(entry.timestamp).getTime() / 1000) : null;
                       const tagText =
                           entry.action === "changed"
-                              ? `\`${escapeInline(entry.previousTag || "-")}\` ➜ \`${escapeInline(entry.newTag || "-")}\``
-                              : `\`${escapeInline(entry.newTag || entry.previousTag || "-")}\``;
+                              ? `\`[${escapeInline(entry.previousTag || "-")}]\` ➜ \`[${escapeInline(entry.newTag || "-")}]\``
+                              : `\`[${escapeInline(entry.newTag || entry.previousTag || "-")}]\``;
                       return `• <@${entry.userId}> — ${formatActionBadge(entry.action)} ${tagText}${unix ? ` (<t:${unix}:R>)` : ""}`;
                   })
-                : ["*Belum ada aktivitas perubahan Server Tag yang tercatat di server ini.*"];
+                : ["*Belum ada aktivitas perubahan Server Tag yang tercatat pada server ini.*"];
 
         const serverEmbed = new EmbedBuilder()
             .setColor(TAG_COLORS.INFO)
@@ -162,19 +168,17 @@ module.exports = {
                 name: `${guild.name} • Statistik Server Tag`,
                 iconURL: guildIcon,
             })
-            .setTitle("📊 Statistik Aktivitas Server Tag")
+            .setTitle("📊 Statistik Server Tag")
             .setThumbnail(guildIcon)
-            .setDescription(
-                `Ringkasan data pemantauan **Server Tag** untuk komunitas **${escapeMarkdown(guild.name)}** berdasarkan pencatatan database Lagukan.`,
-            )
+            .setDescription(`Data statistik aktivitas **Server Tag** khusus untuk server **${escapeMarkdown(guild.name)}**.`)
             .addFields(
                 {
-                    name: "⚙️ Status & Cakupan Saat Ini",
+                    name: "⚙️ Informasi Server",
                     value: overviewLines.join("\n"),
                     inline: false,
                 },
                 {
-                    name: "📈 Akumulasi Aktivitas Server",
+                    name: "📈 Akumulasi Aktivitas",
                     value: counterLines.join("\n"),
                     inline: false,
                 },
