@@ -5,12 +5,14 @@ const Logger = require("../utils/logger");
 module.exports = (client) => {
     try {
         const data = [];
+        const interactionRoot = path.join(__dirname, "../commands/interaction");
 
-        readdirSync("./src/commands/interaction/").forEach((dir) => {
-            const commands = readdirSync(`./src/commands/interaction/${dir}/`).filter((file) => file.endsWith(".js"));
+        readdirSync(interactionRoot).forEach((dir) => {
+            const dirPath = path.join(interactionRoot, dir);
+            const commands = readdirSync(dirPath).filter((file) => file.endsWith(".js"));
 
             for (const file of commands) {
-                const pull = require(path.join(__dirname, `../commands/interaction/${dir}/${file}`));
+                const pull = require(path.join(dirPath, file));
 
                 if (pull.name) {
                     client.slash.set(pull.name, pull);
@@ -22,9 +24,12 @@ module.exports = (client) => {
         });
 
         client.on("clientReady", async () => {
-            await client.application.commands.set(data);
-
-            Logger.info(`${client.slash.size} Slash commands loaded`);
+            try {
+                await client.application.commands.set(data);
+                Logger.info(`${client.slash.size} Slash commands loaded`);
+            } catch (syncError) {
+                Logger.error("Failed to register slash commands with Discord API:", syncError);
+            }
         });
     } catch (error) {
         Logger.error("Failed to load slash commands:", error);
