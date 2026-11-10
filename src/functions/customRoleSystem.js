@@ -6,6 +6,8 @@ const {
     AttachmentBuilder,
     ButtonBuilder,
     ButtonStyle,
+    ChannelSelectMenuBuilder,
+    ChannelType,
     Constants,
     EmbedBuilder,
     FileUploadBuilder,
@@ -385,14 +387,40 @@ function getOrInitDraft(client, guildId, userId) {
             colorHex: null,
             gradient: null,
             pendingImage: null,
+            createDraft: {
+                roleName: "",
+                colorHex: "#00E5FF",
+                gradient: null,
+                pendingImage: null,
+            },
             adminSelectedRoleId: null,
             adminPage: 0,
             updatedAt: Date.now(),
         };
         client.data.set(key, draft);
     }
+    if (!draft.createDraft) {
+        draft.createDraft = {
+            roleName: "",
+            colorHex: "#00E5FF",
+            gradient: null,
+            pendingImage: null,
+        };
+    }
     draft.updatedAt = Date.now();
     return draft;
+}
+
+function resetCreateDraft(client, guildId, userId) {
+    const draft = getOrInitDraft(client, guildId, userId);
+    draft.createDraft = {
+        roleName: "",
+        colorHex: "#00E5FF",
+        gradient: null,
+        pendingImage: null,
+    };
+    draft.updatedAt = Date.now();
+    return draft.createDraft;
 }
 
 function clearEditDraftFields(client, guildId, userId) {
@@ -668,6 +696,16 @@ async function validateBotRoleManagement(guild, existingRole = null) {
         };
     }
 
+    if (!existingRole && (guild.roles?.cache?.size || 0) >= 250) {
+        return {
+            valid: false,
+            code: "MAX_GUILD_ROLES",
+            botMember,
+            message:
+                "Server ini telah mencapai batas maksimal resmi Discord (**250 role**). Hapus role yang tidak terpakai terlebih dahulu sebelum membuat Custom Role baru.",
+        };
+    }
+
     if (existingRole) {
         if (String(existingRole.id) === String(guild.id)) {
             return {
@@ -718,21 +756,44 @@ async function validateBotRoleManagement(guild, existingRole = null) {
 
 function normalizeGuildCustomRoleConfig(guildId, doc = null) {
     const gId = String(guildId);
-    const rawAllowed = Array.isArray(doc?.allowedRoles) ? doc.allowedRoles : [];
+    const rawAllowed =
+        Array.isArray(doc?.allowedRoles) && doc.allowedRoles.length > 0
+            ? doc.allowedRoles
+            : Array.isArray(doc?.allowedRoleIds)
+              ? doc.allowedRoleIds
+              : Array.isArray(doc?.allowedRoles)
+                ? doc.allowedRoles
+                : [];
     const dedupedRoles = [...new Set(rawAllowed.map((id) => String(id || "").trim()).filter((id) => id.length > 0 && id !== gId))].slice(
         0,
         MAX_ALLOWED_ROLES_PER_GUILD,
     );
 
-    const parsedMax = Number.parseInt(doc?.maxRolesPerMember, 10);
+    const rawLimit = doc?.maxRolesPerMember ?? doc?.roleLimit;
+    const parsedMax = Number.parseInt(rawLimit, 10);
     const maxRolesPerMember = Number.isFinite(parsedMax) && parsedMax >= 1 ? Math.min(MAX_ROLES_PER_MEMBER_CAP, parsedMax) : 1;
+
+    const boosterAccessEnabled =
+        typeof doc?.boosterAccessEnabled === "boolean"
+            ? doc.boosterAccessEnabled
+            : typeof doc?.boosterAccess === "boolean"
+              ? doc.boosterAccess
+              : true;
+
+    const channelId = doc?.channelId ? String(doc.channelId).trim() || null : null;
+    const panelMessageId = doc?.panelMessageId ? String(doc.panelMessageId).trim() || null : null;
 
     return {
         guildId: gId,
-        boosterAccessEnabled: typeof doc?.boosterAccessEnabled === "boolean" ? doc.boosterAccessEnabled : true,
+        channelId,
+        panelMessageId,
+        boosterAccessEnabled,
+        boosterAccess: boosterAccessEnabled,
         roleAccessEnabled: typeof doc?.roleAccessEnabled === "boolean" ? doc.roleAccessEnabled : true,
         allowedRoles: dedupedRoles,
+        allowedRoleIds: [...dedupedRoles],
         maxRolesPerMember,
+        roleLimit: maxRolesPerMember,
         customRoleEnabled: typeof doc?.customRoleEnabled === "boolean" ? doc.customRoleEnabled : true,
         updatedBy: doc?.updatedBy ? String(doc.updatedBy) : null,
         updatedAt: doc?.updatedAt ? new Date(doc.updatedAt) : null,
@@ -775,9 +836,20 @@ async function saveGuildCustomRoleConfig(client, guildId, partialUpdate) {
     }
 
     const current = await getGuildCustomRoleConfig(client, gId);
+    const normalizedPatch = { ...partialUpdate };
+    if ("boosterAccess" in normalizedPatch && !("boosterAccessEnabled" in normalizedPatch)) {
+        normalizedPatch.boosterAccessEnabled = normalizedPatch.boosterAccess;
+    }
+    if ("allowedRoleIds" in normalizedPatch && !("allowedRoles" in normalizedPatch)) {
+        normalizedPatch.allowedRoles = normalizedPatch.allowedRoleIds;
+    }
+    if ("roleLimit" in normalizedPatch && !("maxRolesPerMember" in normalizedPatch)) {
+        normalizedPatch.maxRolesPerMember = normalizedPatch.roleLimit;
+    }
+
     const merged = normalizeGuildCustomRoleConfig(gId, {
         ...current,
-        ...partialUpdate,
+        ...normalizedPatch,
     });
 
     const now = new Date();
@@ -788,10 +860,15 @@ async function saveGuildCustomRoleConfig(client, guildId, partialUpdate) {
             {
                 $set: {
                     guildId: gId,
+                    channelId: merged.channelId,
+                    panelMessageId: merged.panelMessageId,
                     boosterAccessEnabled: merged.boosterAccessEnabled,
+                    boosterAccess: merged.boosterAccess,
                     roleAccessEnabled: merged.roleAccessEnabled,
                     allowedRoles: merged.allowedRoles,
+                    allowedRoleIds: merged.allowedRoleIds,
                     maxRolesPerMember: merged.maxRolesPerMember,
+                    roleLimit: merged.roleLimit,
                     customRoleEnabled: merged.customRoleEnabled,
                     updatedBy: merged.updatedBy,
                     updatedAt: now,
@@ -962,25 +1039,48 @@ async function checkCustomRoleAccess(client, guild, interaction) {
     };
 }
 
-function buildCustomRoleAccessDeniedEmbed(client, code = "ACCESS_DENIED") {
+function buildCustomRoleAccessDeniedEmbed(client, code = "ACCESS_DENIED", config = null) {
     const botAvatar = getBotAvatarUrl(client);
+    const requirementBullets = [];
+
+    if (config) {
+        if (config.boosterAccessEnabled) {
+            requirementBullets.push("- **Server Booster** aktif di server ini.");
+        }
+        if (config.roleAccessEnabled && Array.isArray(config.allowedRoles) && config.allowedRoles.length > 0) {
+            const mentions = config.allowedRoles
+                .slice(0, 8)
+                .map((id) => `<@&${id}>`)
+                .join(", ");
+            const more = config.allowedRoles.length > 8 ? ` *(+${config.allowedRoles.length - 8} role lainnya)*` : "";
+            requirementBullets.push(`- Member dengan salah satu **Role Khusus**: ${mentions}${more}.`);
+        } else if (config.roleAccessEnabled && !config.boosterAccessEnabled) {
+            requirementBullets.push("- Member dengan **Role Khusus** yang ditentukan admin *(belum ada role yang dipilih admin)*.");
+        }
+        if (requirementBullets.length === 0) {
+            requirementBullets.push("- Saat ini akses member sedang dibatasi oleh **Administrator** server.");
+        } else if (config.boosterAccessEnabled && config.roleAccessEnabled && config.allowedRoles.length > 0) {
+            requirementBullets.push("", "*Memenuhi **salah satu** syarat di atas sudah cukup untuk mendapatkan akses.*");
+        }
+    } else {
+        requirementBullets.push("- Server Booster.", "- Member dengan role khusus yang ditentukan admin.");
+    }
+
     const lines =
         code === "SYSTEM_DISABLED"
             ? [
-                  "Fitur Custom Role sedang dinonaktifkan oleh admin di server ini.",
+                  "Fitur Custom Role sedang dinonaktifkan sementara oleh admin di server ini.",
                   "",
                   "Akses hanya tersedia untuk:",
                   "",
-                  "- Server Booster.",
-                  "- Member dengan role khusus yang ditentukan admin.",
+                  ...requirementBullets,
               ]
             : [
-                  "Kamu belum memiliki akses untuk menggunakan Custom Role.",
+                  "Kamu belum memiliki akses untuk menggunakan Custom Role di server ini.",
                   "",
                   "Akses hanya tersedia untuk:",
                   "",
-                  "- Server Booster.",
-                  "- Member dengan role khusus yang ditentukan admin.",
+                  ...requirementBullets,
               ];
 
     return new EmbedBuilder()
@@ -2061,7 +2161,7 @@ async function buildViewCustomRolePanel(client, guild, user, record, liveRole) {
     };
 }
 
-function buildDeleteConfirmPanel(client, userId, record, liveRole) {
+function buildDeleteConfirmPanel(client, userId, record, liveRole, allPairs = []) {
     const botAvatar = getBotAvatarUrl(client);
     const embed = new EmbedBuilder()
         .setColor(CR_COLORS.ERROR)
@@ -2071,11 +2171,36 @@ function buildDeleteConfirmPanel(client, userId, record, liveRole) {
                 `Apakah Anda yakin ingin menghapus Custom Role ${liveRole ? `<@&${liveRole.id}>` : `**${escapeMarkdown(record.roleName)}**`} dari server ini?`,
                 "",
                 "• Role pada Discord dan konfigurasi warna/gradasi/gambar di MongoDB untuk server ini akan dihapus permanen.",
+                "• Sistem hanya menghapus Custom Role terdaftar milik Anda sendiri.",
                 "• Custom Role Anda di server lain **tidak akan terpengaruh**.",
             ].join("\n"),
         )
         .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
         .setTimestamp();
+
+    const components = [];
+
+    if (Array.isArray(allPairs) && allPairs.length > 1) {
+        const selectOptions = allPairs.slice(0, 25).map((pair, idx) => {
+            const labelName = pair.liveRole?.name || pair.record.roleName || `Role #${idx + 1}`;
+            return {
+                label: `${idx + 1}. ${labelName}`.slice(0, 100),
+                value: String(pair.record.roleId),
+                emoji: pair.liveRole ? "🎭" : "⚠️",
+                description: `${pair.record.color} • ID: ${pair.record.roleId}`.slice(0, 100),
+                default: String(pair.record.roleId) === String(record.roleId),
+            };
+        });
+
+        components.push(
+            new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId(`${CR_PREFIX}:delete_select_role:${userId}`)
+                    .setPlaceholder("🎭 Pilih Custom Role Milikmu yang Akan Dihapus ▼")
+                    .addOptions(selectOptions),
+            ),
+        );
+    }
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -2084,16 +2209,570 @@ function buildDeleteConfirmPanel(client, userId, record, liveRole) {
             .setEmoji("🗑️")
             .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
-            .setCustomId(`${CR_PREFIX}:cancel:${userId}`)
+            .setCustomId(`${CR_PREFIX}:delete_cancel:${userId}`)
             .setLabel("BATALKAN")
             .setEmoji("↩️")
             .setStyle(ButtonStyle.Secondary),
     );
 
+    components.push(row);
+
     return {
         embeds: [embed],
-        components: [row],
+        components,
         files: [],
+    };
+}
+
+// ============================================================================
+// Permanent Public Custom Role Panel & Auto-Sync Engine (No Collector Needed)
+// ============================================================================
+
+async function resolveGuildTextChannel(guild, channelId) {
+    if (!guild || !channelId) return null;
+    const cId = String(channelId);
+    const cached = guild.channels?.cache?.get?.(cId) || null;
+    if (cached) return cached;
+    if (typeof guild.channels?.fetch === "function") {
+        return guild.channels.fetch(cId).catch(() => null);
+    }
+    return null;
+}
+
+async function fetchChannelMessageSafe(channel, messageId) {
+    if (!channel || !messageId) return null;
+    const mId = String(messageId);
+    if (typeof channel.messages?.fetch === "function") {
+        const fetched = await channel.messages.fetch(mId).catch(() => null);
+        if (fetched) return fetched;
+    }
+    return channel.messages?.cache?.get?.(mId) || null;
+}
+
+async function validateBotPanelChannelPermissions(guild, channel) {
+    if (!channel || typeof channel.send !== "function") {
+        return {
+            valid: false,
+            code: "INVALID_CHANNEL",
+            message: "Channel yang dipilih tidak valid atau bukan channel teks server.",
+        };
+    }
+
+    const channelGuildId = channel.guildId || channel.guild?.id;
+    if (channelGuildId && String(channelGuildId) !== String(guild.id)) {
+        return {
+            valid: false,
+            code: "WRONG_GUILD_CHANNEL",
+            message: "Channel tersebut bukan bagian dari server ini.",
+        };
+    }
+
+    const botMember = await resolveBotMember(guild);
+    if (!botMember) {
+        return {
+            valid: false,
+            code: "BOT_MEMBER_MISSING",
+            message: "Data member bot di server ini belum tersedia. Silakan coba lagi.",
+        };
+    }
+
+    if (typeof channel.permissionsFor === "function") {
+        const perms = channel.permissionsFor(botMember);
+        const required = [
+            { flag: PermissionsBitField.Flags.ViewChannel, name: "View Channel" },
+            { flag: PermissionsBitField.Flags.SendMessages, name: "Send Messages" },
+            { flag: PermissionsBitField.Flags.EmbedLinks, name: "Embed Links" },
+            { flag: PermissionsBitField.Flags.ReadMessageHistory, name: "Read Message History" },
+        ];
+        const missing = required.filter((req) => perms && !perms.has(req.flag)).map((req) => req.name);
+        if (missing.length > 0) {
+            return {
+                valid: false,
+                code: "MISSING_PANEL_PERMS",
+                missing,
+                message: `Bot **Lagukan** tidak memiliki permission **\`${missing.join(", ")}\`** pada channel <#${channel.id}>. Berikan izin tersebut terlebih dahulu.`,
+            };
+        }
+    }
+
+    return {
+        valid: true,
+        code: "OK",
+        message: null,
+    };
+}
+
+function buildCustomRolePublicPanel(client, guild, config) {
+    const botName = client?.config?.botName || "Lagukan";
+    const botAvatar = getBotAvatarUrl(client);
+    const guildIcon = guild.iconURL?.({ size: 256 }) || botAvatar;
+    const capabilities = detectGuildCustomRoleCapabilities(guild);
+
+    const accessRules = [];
+    if (!config.customRoleEnabled) {
+        accessRules.push("🔴 **Status Sistem:** Sedang dinonaktifkan sementara oleh Admin.");
+    } else {
+        accessRules.push("🟢 **Status Sistem:** Aktif & Otomatis");
+    }
+
+    if (config.boosterAccessEnabled) {
+        accessRules.push("💎 **Server Booster:** Diizinkan otomatis");
+    }
+
+    if (config.roleAccessEnabled) {
+        if (Array.isArray(config.allowedRoles) && config.allowedRoles.length > 0) {
+            const roleMentions = config.allowedRoles
+                .slice(0, 8)
+                .map((id) => `<@&${id}>`)
+                .join(", ");
+            const extraCount = config.allowedRoles.length > 8 ? ` *(+${config.allowedRoles.length - 8} lainnya)*` : "";
+            accessRules.push(`🎭 **Role Khusus:** ${roleMentions}${extraCount}`);
+        } else {
+            accessRules.push("🎭 **Role Khusus:** Diaktifkan *(menunggu Admin memilih daftar role)*");
+        }
+    }
+
+    if (config.boosterAccessEnabled && config.roleAccessEnabled && config.allowedRoles.length > 0) {
+        accessRules.push("ℹ️ *Berlaku aturan **OR**: cukup menjadi Server Booster **atau** memiliki salah satu Role Khusus di atas.*");
+    } else if (!config.boosterAccessEnabled && (!config.roleAccessEnabled || config.allowedRoles.length === 0)) {
+        accessRules.push("🔒 *Saat ini akses hanya terbuka bagi Administrator / Pengelola Server.*");
+    }
+
+    accessRules.push(`🔢 **Kuota Kepemilikan:** Maksimal \`${config.maxRolesPerMember || 1}\` Custom Role per member`);
+
+    const featureLines = [
+        "• **Nama & Warna Kustom:** Pilih warna Preset populer atau kode **HEX** bebas beserta preview visual.",
+        `• **Gradasi Warna Role:** ${
+            capabilities.hasEnhancedRoleColors
+                ? "🟢 Didukung (`Enhanced Role Styles` aktif)"
+                : "⚪ Mengikuti dukungan fitur `Enhanced Role Styles` Discord server"
+        }`,
+        `• **Ikon Role (Attachment):** ${
+            capabilities.hasRoleIcons
+                ? "🟢 Didukung (`Role Icons` / Boost Lv. 2+ aktif)"
+                : "⚪ Membutuhkan `Server Boost Level 2` (`ROLE_ICONS`)"
+        }`,
+    ];
+
+    const buttonGuideLines = [
+        "➕ **`CREATE ROLE`** — Buka dashboard pembuatan Custom Role baru",
+        "🎛️ **`MANAGE ROLE`** — Kelola nama, warna, gradasi, dan ikon role milikmu",
+        "🗑️ **`DELETE ROLE`** — Hapus Custom Role milikmu beserta datanya dengan aman",
+    ];
+
+    const embed = new EmbedBuilder()
+        .setColor(config.customRoleEnabled ? CR_COLORS.PRIMARY : CR_COLORS.DARK)
+        .setAuthor({
+            name: `${guild.name} • ${botName} Custom Role`,
+            iconURL: guildIcon,
+        })
+        .setTitle("CUSTOM ROLE SYSTEM")
+        .setDescription("Buat dan kelola role pribadimu melalui panel ini.")
+        .addFields(
+            {
+                name: "🛡️ Persyaratan & Akses Server",
+                value: accessRules.join("\n"),
+                inline: false,
+            },
+            {
+                name: "✨ Fitur Kustomisasi",
+                value: featureLines.join("\n"),
+                inline: false,
+            },
+            {
+                name: "🎛️ Navigasi Panel",
+                value: buttonGuideLines.join("\n"),
+                inline: false,
+            },
+        )
+        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+        .setTimestamp();
+
+    if (guildIcon) {
+        embed.setThumbnail(guildIcon);
+    }
+
+    // Permanent stateless customIds — handled globally via interactionCreate (survives all restarts!)
+    const buttonRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`${CR_PREFIX}:panel_create`).setLabel("CREATE ROLE").setEmoji("➕").setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(`${CR_PREFIX}:panel_manage`).setLabel("MANAGE ROLE").setEmoji("🎛️").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(`${CR_PREFIX}:panel_delete`).setLabel("DELETE ROLE").setEmoji("🗑️").setStyle(ButtonStyle.Danger),
+    );
+
+    return {
+        embeds: [embed],
+        components: [buttonRow],
+    };
+}
+
+/**
+ * Sends, edits in-place, moves, or recreates a guild's Custom Role panel without ever creating duplicates.
+ */
+async function syncCustomRolePanel(client, guild, options = {}) {
+    if (!guild?.id) {
+        return { ok: false, code: "NO_GUILD", message: "Data server tidak ditemukan." };
+    }
+
+    return withCustomRoleLock(guild.id, "panel_sync", async () => {
+        const currentConfig = await getGuildCustomRoleConfig(client, guild.id);
+        const desiredChannelId = options.targetChannelId ? String(options.targetChannelId) : currentConfig.channelId;
+
+        if (!desiredChannelId) {
+            return {
+                ok: false,
+                code: "NO_CHANNEL",
+                config: currentConfig,
+                message: "Channel panel Custom Role belum dipilih. Pilih channel melalui menu dropdown terlebih dahulu.",
+            };
+        }
+
+        const targetChannel = await resolveGuildTextChannel(guild, desiredChannelId);
+        const permCheck = await validateBotPanelChannelPermissions(guild, targetChannel);
+        if (!permCheck.valid) {
+            return {
+                ok: false,
+                code: permCheck.code,
+                config: currentConfig,
+                message: permCheck.message,
+            };
+        }
+
+        const previousChannelId = currentConfig.channelId;
+        const previousMessageId = currentConfig.panelMessageId;
+        const isChannelChanged = Boolean(previousChannelId && String(previousChannelId) !== String(desiredChannelId));
+        const forceResend = Boolean(options.forceResend);
+        const recreateIfMissing = options.recreateIfMissing !== false;
+
+        // Build panel with target channel reflected in config
+        const workingConfig = normalizeGuildCustomRoleConfig(guild.id, {
+            ...currentConfig,
+            channelId: desiredChannelId,
+            ...(options.updatedBy ? { updatedBy: String(options.updatedBy) } : {}),
+        });
+        const panelPayload = buildCustomRolePublicPanel(client, guild, workingConfig);
+
+        // Clean up old panel message when moving channels or explicitly resending so duplicates never remain
+        if ((isChannelChanged || forceResend) && previousChannelId && previousMessageId) {
+            const oldChannel = isChannelChanged ? await resolveGuildTextChannel(guild, previousChannelId) : targetChannel;
+            if (oldChannel) {
+                const oldMsg = await fetchChannelMessageSafe(oldChannel, previousMessageId);
+                if (oldMsg && typeof oldMsg.delete === "function") {
+                    await oldMsg.delete().catch(() => {});
+                }
+            }
+        }
+
+        // Try in-place edit when staying in the same channel and not forcing resend
+        if (!isChannelChanged && !forceResend && previousMessageId) {
+            const existingMsg = await fetchChannelMessageSafe(targetChannel, previousMessageId);
+            if (existingMsg && typeof existingMsg.edit === "function") {
+                try {
+                    await existingMsg.edit(panelPayload);
+                    const saved = isMongoReady()
+                        ? await saveGuildCustomRoleConfig(client, guild.id, {
+                              channelId: desiredChannelId,
+                              panelMessageId: String(existingMsg.id),
+                              ...(options.updatedBy ? { updatedBy: String(options.updatedBy) } : {}),
+                          })
+                        : workingConfig;
+
+                    return {
+                        ok: true,
+                        action: "updated",
+                        channelId: desiredChannelId,
+                        panelMessageId: String(existingMsg.id),
+                        config: saved,
+                    };
+                } catch (editErr) {
+                    Logger.warn(`[CustomRolePanel] Gagal mengedit panel lama (${guild.id}), mencoba kirim ulang: ${editErr?.message}`);
+                }
+            }
+
+            if (!recreateIfMissing) {
+                return {
+                    ok: false,
+                    code: "PANEL_DELETED",
+                    config: currentConfig,
+                    message: "Pesan panel sebelumnya telah terhapus.",
+                };
+            }
+        }
+
+        // Send fresh panel message (initial setup, channel move, deleted panel recovery, or explicit resend)
+        let sentMsg;
+        try {
+            sentMsg = await targetChannel.send(panelPayload);
+        } catch (sendErr) {
+            Logger.error(`[CustomRolePanel] Gagal mengirim panel Custom Role ke channel ${desiredChannelId} (${guild.id}):`, sendErr);
+            return {
+                ok: false,
+                code: "SEND_FAILED",
+                config: currentConfig,
+                message: `Gagal mengirim panel ke <#${desiredChannelId}>: \`${escapeInline(sendErr?.message || "Discord API Error")}\``,
+            };
+        }
+
+        const savedConfig = await saveGuildCustomRoleConfig(client, guild.id, {
+            channelId: desiredChannelId,
+            panelMessageId: String(sentMsg.id),
+            ...(options.updatedBy ? { updatedBy: String(options.updatedBy) } : {}),
+        });
+
+        const resultAction = isChannelChanged ? "moved" : forceResend ? "resent" : previousMessageId ? "recreated" : "created";
+
+        return {
+            ok: true,
+            action: resultAction,
+            channelId: desiredChannelId,
+            panelMessageId: String(sentMsg.id),
+            config: savedConfig,
+        };
+    });
+}
+
+/**
+ * Verifies & syncs Custom Role panels across all configured guilds on bot startup without creating duplicates.
+ */
+async function initializeCustomRolePanels(client) {
+    try {
+        for (let attempt = 0; attempt < 10 && !isMongoReady(); attempt++) {
+            await new Promise((r) => setTimeout(r, 500));
+        }
+        if (!isMongoReady()) return;
+
+        const ConfigModel = getCustomRoleConfigModel(client);
+        if (typeof ConfigModel?.find !== "function") return;
+
+        const query = ConfigModel.find({ channelId: { $ne: null } });
+        const docs = typeof query.lean === "function" ? await query.lean() : await query;
+        if (!Array.isArray(docs) || docs.length === 0) return;
+
+        for (const rawDoc of docs) {
+            if (!rawDoc?.guildId || !rawDoc?.channelId) continue;
+            const gId = String(rawDoc.guildId);
+            const normalized = normalizeGuildCustomRoleConfig(gId, rawDoc);
+            client.data.set(`customRoleConfig_${gId}`, normalized);
+
+            const guild = client.guilds?.cache?.get?.(gId);
+            if (!guild) continue;
+
+            await syncCustomRolePanel(client, guild, {
+                forceResend: false,
+                recreateIfMissing: true,
+            }).catch((err) => {
+                Logger.debug(`[CustomRolePanel] Sinkronisasi awal dilewati untuk server ${gId}: ${err?.message || err}`);
+            });
+        }
+    } catch (err) {
+        Logger.debug(`[CustomRolePanel] Gagal menjalankan inisialisasi panel awal: ${err?.message || err}`);
+    }
+}
+
+// ============================================================================
+// UI Builder — Dedicated Ephemeral Create Role Dashboard (Panel `CREATE ROLE`)
+// ============================================================================
+
+async function buildCreateRoleStudioPanel(client, guild, user, options = {}) {
+    const userId = String(user.id);
+    const botAvatar = getBotAvatarUrl(client);
+    const guildIcon = guild.iconURL?.({ size: 128 }) || botAvatar;
+    const capabilities = detectGuildCustomRoleCapabilities(guild);
+    const config = options.config || (await getGuildCustomRoleConfig(client, guild.id));
+    const roleCtx = options.roleCtx || (await resolveUserRoleContext(client, guild, userId));
+    const draft = getOrInitDraft(client, guild.id, userId);
+    const cDraft = draft.createDraft;
+
+    const activeCount = roleCtx.activePairs.length;
+    const maxRoles = config.maxRolesPerMember || 1;
+
+    const activeHexParsed = parseAndValidateHexColor(cDraft.colorHex || "#00E5FF");
+    const activeHex = activeHexParsed.valid ? activeHexParsed.hex : "#00E5FF";
+
+    const gradActive = Boolean(capabilities.hasEnhancedRoleColors && cDraft.gradient?.enabled && cDraft.gradient.colors?.length >= 2);
+    const previewHexes = gradActive ? cDraft.gradient.colors : [activeHex];
+    const previewDirection = gradActive ? cDraft.gradient.direction || "horizontal" : "horizontal";
+
+    const pngBuffer = generateColorOrGradientPng(previewHexes, previewDirection);
+    const previewAttachment = new AttachmentBuilder(pngBuffer, { name: "lagukan-create-role-preview.png" });
+
+    const gradLabel = gradActive
+        ? `${cDraft.gradient.colors.map((c) => `\`${c}\``).join(" → ")} (${
+              cDraft.gradient.mode === "holographic" ? "Holografik Resmi Discord" : "Gradasi 2 Warna"
+          })`
+        : capabilities.hasEnhancedRoleColors
+          ? "`Nonaktif (Warna Solid)`"
+          : "`Tidak Didukung Server Ini`";
+
+    const iconLabel =
+        capabilities.hasRoleIcons && cDraft.pendingImage?.meta
+            ? `✅ Siap dipasang (\`${escapeInline(cDraft.pendingImage.meta.fileName)}\` • \`${(cDraft.pendingImage.meta.size / 1024).toFixed(1)} KB\`)`
+            : capabilities.hasRoleIcons
+              ? "`Belum diatur (Opsional — Maks. 256 KB)`"
+              : "`Membutuhkan Server Boost Level 2 (ROLE_ICONS)`";
+
+    const descLines = [
+        `**Dashboard Pembuatan Custom Role — ${escapeMarkdown(guild.name)}**`,
+        "Atur nama role, warna HEX atau preset, gradasi, serta ikon role pribadimu di bawah ini, lalu tekan tombol **`BUAT ROLE SEKARANG`**.",
+    ];
+    if (options.noticeMessage) {
+        descLines.push("", options.noticeMessage);
+    }
+
+    let embedColor = activeHexParsed.valid ? activeHexParsed.discordInt : CR_COLORS.PRIMARY;
+    if (options.noticeType === "error") embedColor = CR_COLORS.ERROR;
+    else if (options.noticeType === "warning") embedColor = CR_COLORS.WARNING;
+    else if (options.noticeType === "success") embedColor = CR_COLORS.SUCCESS;
+
+    const embed = new EmbedBuilder()
+        .setColor(embedColor)
+        .setAuthor({
+            name: `${guild.name} • Pembuatan Custom Role`,
+            iconURL: guildIcon,
+        })
+        .setTitle("➕ CREATE CUSTOM ROLE")
+        .setDescription(descLines.join("\n"))
+        .addFields(
+            {
+                name: "🪪 Draft Custom Role Baru",
+                value: [
+                    `• **Pemilik:** <@${userId}> (\`Kuota: ${activeCount}/${maxRoles}\`)`,
+                    `• **Nama Role:** ${
+                        cDraft.roleName
+                            ? `**${escapeMarkdown(cDraft.roleName)}**`
+                            : "⚠️ *Belum diisi — klik **Nama Role** atau langsung klik **BUAT ROLE SEKARANG***"
+                    }`,
+                    `• **Warna HEX:** \`${activeHex}\``,
+                    `• **Gradasi:** ${gradLabel}`,
+                    `• **Ikon Role:** ${iconLabel}`,
+                ].join("\n"),
+                inline: false,
+            },
+            {
+                name: "🛰️ Dukungan Fitur Resmi Discord",
+                value: [
+                    `• **Gradasi Role:** ${
+                        capabilities.hasEnhancedRoleColors
+                            ? "🟢 Didukung (`Enhanced Role Styles` aktif)"
+                            : "🔒 Tidak didukung di server ini (`ENHANCED_ROLE_COLORS` belum aktif)"
+                    }`,
+                    `• **Ikon Role (Attachment):** ${
+                        capabilities.hasRoleIcons
+                            ? "🟢 Didukung (`Role Icons` / Boost Lv. 2+ aktif)"
+                            : "🔒 Membutuhkan `Server Boost Level 2` (`ROLE_ICONS`)"
+                    }`,
+                ].join("\n"),
+                inline: false,
+            },
+        )
+        .setImage("attachment://lagukan-create-role-preview.png")
+        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+        .setTimestamp();
+
+    if (capabilities.hasRoleIcons && cDraft.pendingImage?.meta?.url) {
+        embed.setThumbnail(cDraft.pendingImage.meta.url);
+    }
+
+    const presetColorRow = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId(`${CR_PREFIX}:create_color_preset:${userId}`)
+            .setPlaceholder("🎨 Pilih Warna Preset Populer ▼")
+            .addOptions(
+                PRESET_COLORS.map((p) => ({
+                    label: `${p.label} (${p.hex})`,
+                    value: p.hex,
+                    emoji: p.emoji,
+                    description: p.description,
+                    default: !gradActive && p.hex.toUpperCase() === activeHex.toUpperCase(),
+                })),
+            ),
+    );
+
+    const gradSelectOptions = [
+        {
+            label: "Tanpa Gradasi (Warna Solid)",
+            value: "off",
+            emoji: "⚪",
+            description: "Gunakan warna solid HEX / Preset utama",
+            default: !gradActive,
+        },
+        ...GRADIENT_PRESETS.filter((gp) => gp.mode === "two_color" || gp.mode === "holographic").map((gp) => ({
+            label: gp.label,
+            value: gp.id,
+            emoji: gp.emoji,
+            description: gp.description,
+        })),
+    ];
+
+    const presetGradRow = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+            .setCustomId(`${CR_PREFIX}:create_grad_preset:${userId}`)
+            .setPlaceholder(
+                capabilities.hasEnhancedRoleColors
+                    ? "🌈 Pilih Gradasi Role (Opsional) ▼"
+                    : "🔒 Gradasi Membutuhkan Fitur Enhanced Role Styles Server",
+            )
+            .setDisabled(!capabilities.hasEnhancedRoleColors)
+            .addOptions(gradSelectOptions),
+    );
+
+    const customizerRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:create_name_modal:${userId}`)
+            .setLabel("Nama Role")
+            .setEmoji("✏️")
+            .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:create_hex_modal:${userId}`)
+            .setLabel("Warna HEX")
+            .setEmoji("⌨️")
+            .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:create_grad_modal:${userId}`)
+            .setLabel("Gradasi HEX")
+            .setEmoji("🌈")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!capabilities.hasEnhancedRoleColors),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:create_icon_modal:${userId}`)
+            .setLabel("Upload Ikon")
+            .setEmoji("🖼️")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!capabilities.hasRoleIcons),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:create_icon_chat:${userId}`)
+            .setLabel("Ikon via Chat")
+            .setEmoji("💬")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!capabilities.hasRoleIcons),
+    );
+
+    const submitRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:create_submit:${userId}`)
+            .setLabel("BUAT ROLE SEKARANG")
+            .setEmoji("✅")
+            .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:create_reset:${userId}`)
+            .setLabel("Reset Draft")
+            .setEmoji("🔄")
+            .setStyle(ButtonStyle.Secondary),
+    );
+
+    if (activeCount > 0) {
+        submitRow.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`${CR_PREFIX}:cancel:${userId}`)
+                .setLabel("Kelola Role Milikku")
+                .setEmoji("🎛️")
+                .setStyle(ButtonStyle.Primary),
+        );
+    }
+
+    return {
+        embeds: [embed],
+        components: [presetColorRow, presetGradRow, customizerRow, submitRow],
+        files: [previewAttachment],
     };
 }
 
@@ -2119,11 +2798,35 @@ async function buildCustomRoleConfigDashboard(client, guild, adminUserId, option
               (allowedRoleMentions.length > 12 ? ` *(+${allowedRoleMentions.length - 12} role lainnya)*` : "")
             : "`Belum ada role khusus yang dipilih`";
 
+    // Check live panel channel & panel message status
+    let panelChannelStatus = "`Belum diatur (pilih channel di bawah)`";
+    let panelMsgStatus = "⚪ `Panel belum dikirim`";
+
+    if (config.channelId) {
+        const liveChannel = await resolveGuildTextChannel(guild, config.channelId);
+        if (!liveChannel) {
+            panelChannelStatus = `⚠️ \`Channel Terhapus (${config.channelId})\` — *pilih channel baru*`;
+            panelMsgStatus = "⚠️ `Channel panel sudah tidak ditemukan`";
+        } else {
+            panelChannelStatus = `<#${liveChannel.id}>`;
+            if (config.panelMessageId) {
+                const livePanelMsg = await fetchChannelMessageSafe(liveChannel, config.panelMessageId);
+                if (livePanelMsg) {
+                    panelMsgStatus = `🟢 **Aktif** (\`ID: ${config.panelMessageId}\`)`;
+                } else {
+                    panelMsgStatus = `⚠️ **Pesan Panel Terhapus** — *tekan **Perbarui Panel** atau **Kirim Ulang** di bawah*`;
+                }
+            } else {
+                panelMsgStatus = "⚪ `Belum ada pesan panel tersimpan`";
+            }
+        }
+    }
+
     const updatedUnix = config.updatedAt ? Math.floor(new Date(config.updatedAt).getTime() / 1000) : null;
 
     const descLines = [
-        `**Pengaturan Sistem Akses Custom Role — ${escapeMarkdown(guild.name)}**`,
-        "Atur siapa saja member yang berhak membuat dan mengelola **Custom Role** di server ini. Semua member biasa tanpa status **Server Booster** atau **Role Khusus** akan ditolak otomatis.",
+        `**Pengaturan Sistem & Panel Custom Role — ${escapeMarkdown(guild.name)}**`,
+        "Pilih **Channel Panel** agar member dapat mengakses fitur **Custom Role** langsung melalui tombol panel tanpa mengetik command `/customrole`, serta atur syarat akses otomatis server.",
     ];
 
     if (!config.boosterAccessEnabled && (!config.roleAccessEnabled || config.allowedRoles.length === 0)) {
@@ -2151,6 +2854,11 @@ async function buildCustomRoleConfigDashboard(client, guild, adminUserId, option
         .setTitle("⚙️ PENGATURAN CUSTOM ROLE SERVER")
         .setDescription(descLines.join("\n"))
         .addFields(
+            {
+                name: "📢 Panel Custom Role Otomatis",
+                value: [`• **Channel Panel:** ${panelChannelStatus}`, `• **Status Pesan Panel:** ${panelMsgStatus}`].join("\n"),
+                inline: false,
+            },
             {
                 name: "🛡️ Status Persyaratan Akses",
                 value: [
@@ -2194,6 +2902,19 @@ async function buildCustomRoleConfigDashboard(client, guild, adminUserId, option
             .setStyle(ButtonStyle.Primary),
     );
 
+    const channelSelect = new ChannelSelectMenuBuilder()
+        .setCustomId(`${CR_PREFIX}:cfg_select_channel:${adminId}`)
+        .setPlaceholder("📢 Pilih Channel Panel Custom Role Otomatis ▼")
+        .setChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setMinValues(1)
+        .setMaxValues(1);
+
+    if (config.channelId && guild.channels?.cache?.has?.(String(config.channelId))) {
+        channelSelect.setDefaultChannels(String(config.channelId));
+    }
+
+    const channelRow = new ActionRowBuilder().addComponents(channelSelect);
+
     const maxSelectableAdd = Math.min(15, Math.max(1, MAX_ALLOWED_ROLES_PER_GUILD));
     const addRoleRow = new ActionRowBuilder().addComponents(
         new RoleSelectMenuBuilder()
@@ -2203,7 +2924,7 @@ async function buildCustomRoleConfigDashboard(client, guild, adminUserId, option
             .setMaxValues(maxSelectableAdd),
     );
 
-    const components = [toggleRow, addRoleRow];
+    const components = [toggleRow, channelRow, addRoleRow];
 
     if (config.allowedRoles.length > 0) {
         const removeOptions = config.allowedRoles.slice(0, 25).map((rId) => {
@@ -2230,18 +2951,30 @@ async function buildCustomRoleConfigDashboard(client, guild, adminUserId, option
 
     const utilRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:cfg_refresh_panel:${adminId}`)
+            .setLabel("Perbarui Panel")
+            .setEmoji("🔄")
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(!config.channelId),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:cfg_resend_panel:${adminId}`)
+            .setLabel("Kirim Ulang Panel")
+            .setEmoji("📨")
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(!config.channelId),
+        new ButtonBuilder()
             .setCustomId(`${CR_PREFIX}:cfg_view_roles:${adminId}`)
-            .setLabel(`Lihat Daftar Role (${config.allowedRoles.length})`)
+            .setLabel(`Daftar Role (${config.allowedRoles.length})`)
             .setEmoji("📋")
             .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId(`${CR_PREFIX}:cfg_member_roles:${adminId}`)
             .setLabel("Kelola Role Member")
             .setEmoji("🛡️")
-            .setStyle(ButtonStyle.Primary),
+            .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId(`${CR_PREFIX}:cfg_clear_roles:${adminId}`)
-            .setLabel("Hapus Semua Role Izin")
+            .setLabel("Reset Role Izin")
             .setEmoji("🧹")
             .setStyle(ButtonStyle.Danger)
             .setDisabled(config.allowedRoles.length === 0),
@@ -2604,6 +3337,332 @@ function createImageUploadModal(userId, hasRoleIcons) {
         .addLabelComponents(label);
 }
 
+function createDraftNameModal(userId, currentName = "", finalizeImmediately = false) {
+    const input = new TextInputBuilder()
+        .setCustomId("role_name")
+        .setLabel("Nama Custom Role (1-100 karakter)")
+        .setPlaceholder("Contoh: Aesthetic Vibes")
+        .setMinLength(1)
+        .setMaxLength(100)
+        .setRequired(true)
+        .setStyle(TextInputStyle.Short);
+
+    if (currentName) {
+        input.setValue(String(currentName).slice(0, 100));
+    }
+
+    const modalAction = finalizeImmediately ? "modal_create_finalize" : "modal_create_name";
+    return new ModalBuilder()
+        .setCustomId(`${CR_PREFIX}:${modalAction}:${userId}`)
+        .setTitle(finalizeImmediately ? "Masukkan Nama & Buat Role" : "Atur Nama Custom Role")
+        .addComponents(new ActionRowBuilder().addComponents(input));
+}
+
+function createDraftHexModal(userId, currentHex = "#00E5FF") {
+    return new ModalBuilder()
+        .setCustomId(`${CR_PREFIX}:modal_create_hex:${userId}`)
+        .setTitle("Atur Warna HEX Role Baru")
+        .addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId("hex_value")
+                    .setLabel("Kode Warna HEX (#RRGGBB)")
+                    .setPlaceholder("Contoh: #00E5FF, #5865F2, #FF00FF")
+                    .setMinLength(4)
+                    .setMaxLength(7)
+                    .setValue(String(currentHex || "#00E5FF"))
+                    .setRequired(true)
+                    .setStyle(TextInputStyle.Short),
+            ),
+        );
+}
+
+function createDraftGradientModal(userId, colors = ["#00E5FF", "#5865F2"]) {
+    const c1 = colors[0] || "#00E5FF";
+    const c2 = colors[1] || "#5865F2";
+
+    return new ModalBuilder()
+        .setCustomId(`${CR_PREFIX}:modal_create_grad:${userId}`)
+        .setTitle("Atur Gradasi Role Baru")
+        .addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId("grad_hex_1")
+                    .setLabel("Warna HEX ke-1 (Utama)")
+                    .setPlaceholder("#00E5FF")
+                    .setMinLength(4)
+                    .setMaxLength(7)
+                    .setValue(c1)
+                    .setRequired(true)
+                    .setStyle(TextInputStyle.Short),
+            ),
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId("grad_hex_2")
+                    .setLabel("Warna HEX ke-2")
+                    .setPlaceholder("#5865F2")
+                    .setMinLength(4)
+                    .setMaxLength(7)
+                    .setValue(c2)
+                    .setRequired(true)
+                    .setStyle(TextInputStyle.Short),
+            ),
+        );
+}
+
+function createDraftIconModal(userId) {
+    const fileUpload = new FileUploadBuilder().setCustomId("role_icon_file").setMinValues(1).setMaxValues(1).setRequired(true);
+
+    const label = new LabelBuilder()
+        .setLabel("Pilih Ikon Role (Attachment Discord)")
+        .setDescription("Format PNG, JPG, JPEG, WEBP (Maksimal 256 KB untuk Role Icon Discord)")
+        .setFileUploadComponent(fileUpload);
+
+    return new ModalBuilder()
+        .setCustomId(`${CR_PREFIX}:modal_create_icon:${userId}`)
+        .setTitle("Unggah Ikon Custom Role Baru")
+        .addLabelComponents(label);
+}
+
+async function executeRoleCreationFromDraft(client, guild, interaction, config, canManage, overrideRoleName = null) {
+    const userId = String(interaction.user.id);
+    const draft = getOrInitDraft(client, guild.id, userId);
+    const cDraft = draft.createDraft;
+    const capabilities = detectGuildCustomRoleCapabilities(guild);
+
+    const roleCtx = await resolveUserRoleContext(client, guild, userId);
+    const maxAllowed = config.maxRolesPerMember || 1;
+
+    if (roleCtx.activePairs.length >= maxAllowed) {
+        const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
+            config,
+            roleCtx,
+            canManageConfig: canManage,
+            noticeType: "warning",
+            noticeMessage: `⚠️ Kamu sudah mencapai batas maksimal Custom Role di server ini (**${roleCtx.activePairs.length}/${maxAllowed}** Custom Role).`,
+        });
+        await safeEditReply(interaction, panel);
+        return true;
+    }
+
+    const botCheck = await validateBotRoleManagement(guild);
+    if (!botCheck.valid) {
+        const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+            config,
+            roleCtx,
+            noticeType: "error",
+            noticeMessage: `❌ **Gagal Membuat Role:**\n${botCheck.message}`,
+        });
+        await safeEditReply(interaction, panel);
+        return true;
+    }
+
+    const candidateName = overrideRoleName !== null ? overrideRoleName : cDraft.roleName;
+    const nameCheck = validateCustomRoleName(guild, candidateName);
+    if (!nameCheck.valid) {
+        const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+            config,
+            roleCtx,
+            noticeType: "error",
+            noticeMessage: `❌ **Nama Role Tidak Valid:**\n${nameCheck.message}`,
+        });
+        await safeEditReply(interaction, panel);
+        return true;
+    }
+
+    const colorCheck = parseAndValidateHexColor(cDraft.colorHex || "#00E5FF");
+    if (!colorCheck.valid) {
+        const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+            config,
+            roleCtx,
+            noticeType: "error",
+            noticeMessage: `❌ **Kode Warna Tidak Valid:**\n${colorCheck.message}`,
+        });
+        await safeEditReply(interaction, panel);
+        return true;
+    }
+
+    // Clean up orphan records whose Discord role was manually deleted outside the bot
+    for (const orphan of roleCtx.orphanPairs) {
+        await deleteCustomRoleRecord(client, guild.id, userId, orphan.record.roleId).catch(() => {});
+    }
+
+    const useGradient = Boolean(capabilities.hasEnhancedRoleColors && cDraft.gradient?.enabled && cDraft.gradient.colors?.length >= 2);
+    const useIcon = Boolean(capabilities.hasRoleIcons && cDraft.pendingImage?.buffer);
+
+    let createColors = {
+        primaryColor: colorCheck.discordInt,
+        secondaryColor: null,
+        tertiaryColor: null,
+    };
+    let savedColorHex = colorCheck.hex;
+    let savedGradient = {
+        enabled: false,
+        mode: "two_color",
+        colors: [],
+        direction: "horizontal",
+        appliedMode: "none",
+    };
+
+    if (useGradient) {
+        if (cDraft.gradient.mode === "holographic") {
+            const holo = Constants?.HolographicStyle || {
+                Primary: 11127295,
+                Secondary: 16759788,
+                tertiary: 16761760,
+            };
+            createColors = {
+                primaryColor: holo.Primary,
+                secondaryColor: holo.Secondary,
+                tertiaryColor: holo.Tertiary ?? holo.tertiary ?? 16761760,
+            };
+            savedColorHex = cDraft.gradient.colors[0] || "#A9C9FF";
+            savedGradient = {
+                enabled: true,
+                mode: "holographic",
+                colors: [...cDraft.gradient.colors],
+                direction: cDraft.gradient.direction || "horizontal",
+                appliedMode: "holographic",
+            };
+        } else {
+            const g1 = parseAndValidateHexColor(cDraft.gradient.colors[0]);
+            const g2 = parseAndValidateHexColor(cDraft.gradient.colors[1] || cDraft.gradient.colors[0]);
+            if (g1.valid && g2.valid) {
+                createColors = {
+                    primaryColor: g1.discordInt,
+                    secondaryColor: g2.discordInt,
+                    tertiaryColor: null,
+                };
+                savedColorHex = g1.hex;
+                savedGradient = {
+                    enabled: true,
+                    mode: "two_color",
+                    colors: [g1.hex, g2.hex],
+                    direction: cDraft.gradient.direction || "horizontal",
+                    appliedMode: "gradient_2",
+                };
+            }
+        }
+    }
+
+    let createdRole;
+    let iconApplied = false;
+    try {
+        const createOptions = {
+            name: nameCheck.name,
+            colors: createColors,
+            permissions: [],
+            mentionable: false,
+            reason: `Lagukan Custom Role dibuat oleh ${interaction.user.username} (${userId})`,
+        };
+
+        if (useIcon) {
+            createOptions.icon = cDraft.pendingImage.buffer;
+        }
+
+        createdRole = await guild.roles.create(createOptions);
+        iconApplied = Boolean(useIcon);
+    } catch (discordErr) {
+        // Fallback without gradient/icon if Discord API rejected optional style while keeping basic creation resilient
+        if (useGradient || useIcon) {
+            try {
+                createdRole = await guild.roles.create({
+                    name: nameCheck.name,
+                    colors: {
+                        primaryColor: colorCheck.discordInt,
+                        secondaryColor: null,
+                        tertiaryColor: null,
+                    },
+                    permissions: [],
+                    mentionable: false,
+                    reason: `Lagukan Custom Role dibuat oleh ${interaction.user.username} (${userId})`,
+                });
+                savedColorHex = colorCheck.hex;
+                savedGradient = {
+                    enabled: false,
+                    mode: "two_color",
+                    colors: [],
+                    direction: "horizontal",
+                    appliedMode: "none",
+                };
+                iconApplied = false;
+            } catch (fallbackErr) {
+                Logger.error("[CustomRole] Gagal membuat role Discord:", fallbackErr);
+                const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                    config,
+                    noticeType: "error",
+                    noticeMessage:
+                        "❌ **Gagal Membuat Role di Discord:** Pastikan bot memiliki izin `Manage Roles`, hierarchy role memadai, dan jumlah role server belum mencapai batas maksimal Discord (250 role).",
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+        } else {
+            Logger.error("[CustomRole] Gagal membuat role Discord:", discordErr);
+            const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                config,
+                noticeType: "error",
+                noticeMessage:
+                    "❌ **Gagal Membuat Role di Discord:** Pastikan bot memiliki izin `Manage Roles`, hierarchy role memadai, dan jumlah role server belum mencapai batas maksimal Discord (250 role).",
+            });
+            await safeEditReply(interaction, panel);
+            return true;
+        }
+    }
+
+    const member = await resolveGuildMember(guild, userId, interaction.member);
+    if (member?.roles?.add) {
+        await member.roles.add(createdRole.id, "Lagukan Custom Role: Pemberian role otomatis kepada pembuat").catch((err) => {
+            Logger.warn(`[CustomRole] Gagal memasang role ${createdRole.id} ke member ${userId}: ${err.message}`);
+        });
+    }
+
+    try {
+        await saveUserCustomRoleRecord(client, {
+            guildId: guild.id,
+            userId,
+            roleId: createdRole.id,
+            roleName: createdRole.name,
+            color: savedColorHex,
+            gradient: savedGradient,
+            imageUrl: iconApplied && cDraft.pendingImage?.meta?.url ? cDraft.pendingImage.meta.url : null,
+            imageMeta:
+                iconApplied && cDraft.pendingImage?.meta
+                    ? {
+                          fileName: cDraft.pendingImage.meta.fileName,
+                          contentType: cDraft.pendingImage.meta.contentType,
+                          size: cDraft.pendingImage.meta.size,
+                          width: cDraft.pendingImage.meta.width,
+                          height: cDraft.pendingImage.meta.height,
+                          appliedToDiscord: true,
+                      }
+                    : {},
+        });
+    } catch (dbErr) {
+        await createdRole.delete("Rollback karena penyimpanan MongoDB gagal").catch(() => {});
+        const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+            config,
+            noticeType: "error",
+            noticeMessage: `❌ **Gagal Menyimpan ke MongoDB:** \`${escapeInline(dbErr?.message || "Kesalahan database")}\``,
+        });
+        await safeEditReply(interaction, panel);
+        return true;
+    }
+
+    draft.selectedRoleId = String(createdRole.id);
+    resetCreateDraft(client, guild.id, userId);
+    clearEditDraftFields(client, guild.id, userId);
+
+    const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
+        config,
+        canManageConfig: canManage,
+        noticeType: "success",
+        noticeMessage: `🎉 **Custom Role Berhasil Dibuat!** Role <@&${createdRole.id}> telah dibuat, dipasang ke akun Anda, dan disimpan ke MongoDB.`,
+    });
+    await safeEditReply(interaction, panel);
+    return true;
+}
+
 // ============================================================================
 // Admin Configuration Interaction Handler (`cfg_*` and `modal_cfg_*`)
 // ============================================================================
@@ -2658,10 +3717,17 @@ async function handleAdminConfigInteraction(client, guild, interaction, action, 
                 }
 
                 try {
-                    const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                    let saved = await saveGuildCustomRoleConfig(client, guild.id, {
                         maxRolesPerMember: parsed,
                         updatedBy: adminId,
                     });
+                    if (saved.channelId) {
+                        const syncRes = await syncCustomRolePanel(client, guild, {
+                            forceResend: false,
+                            recreateIfMissing: true,
+                        });
+                        if (syncRes.ok && syncRes.config) saved = syncRes.config;
+                    }
                     const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
                         config: saved,
                         noticeType: "success",
@@ -2793,12 +3859,97 @@ async function handleAdminConfigInteraction(client, guild, interaction, action, 
                 return true;
             }
 
+            if (action === "cfg_select_channel") {
+                const pickedChannelId = interaction.values?.[0] ? String(interaction.values[0]) : null;
+                if (!pickedChannelId) {
+                    const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                        config: currentConfig,
+                        noticeType: "error",
+                        noticeMessage: "❌ **Channel Tidak Valid:** Silakan pilih satu channel teks untuk Panel Custom Role.",
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const syncRes = await syncCustomRolePanel(client, guild, {
+                    targetChannelId: pickedChannelId,
+                    forceResend: false,
+                    recreateIfMissing: true,
+                    updatedBy: adminId,
+                });
+
+                if (!syncRes.ok) {
+                    const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                        config: currentConfig,
+                        noticeType: "error",
+                        noticeMessage: `❌ **Gagal Mengirim Panel Custom Role:** ${syncRes.message}`,
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const statusMsg =
+                    syncRes.action === "moved"
+                        ? `✅ **Channel Panel Dipindahkan!** Panel lama dihapus dan Panel Custom Role baru berhasil dikirim ke <#${syncRes.channelId}> (\`ID Pesan: ${syncRes.panelMessageId}\`).`
+                        : syncRes.action === "updated"
+                          ? `✅ **Panel Custom Role Diperbarui!** Panel yang sudah ada di <#${syncRes.channelId}> diperbarui tanpa pesan duplikat.`
+                          : `✅ **Panel Custom Role Berhasil Dikirim!** Panel otomatis telah terpasang di <#${syncRes.channelId}> (\`ID Pesan: ${syncRes.panelMessageId}\`).`;
+
+                const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                    config: syncRes.config,
+                    noticeType: "success",
+                    noticeMessage: statusMsg,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "cfg_refresh_panel" || action === "cfg_resend_panel") {
+                const isResend = action === "cfg_resend_panel";
+                const syncRes = await syncCustomRolePanel(client, guild, {
+                    forceResend: isResend,
+                    recreateIfMissing: true,
+                    updatedBy: adminId,
+                });
+
+                if (!syncRes.ok) {
+                    const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                        config: currentConfig,
+                        noticeType: "error",
+                        noticeMessage: `❌ **Gagal Memproses Panel:** ${syncRes.message}`,
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                let noticeText;
+                if (syncRes.action === "resent") {
+                    noticeText = `📨 **Panel Berhasil Dikirim Ulang!** Panel lama telah digantikan dengan pesan panel baru di <#${syncRes.channelId}> (\`ID: ${syncRes.panelMessageId}\`).`;
+                } else if (syncRes.action === "recreated") {
+                    noticeText = `🔄 **Panel Berhasil Dibuat Ulang!** Pesan panel sebelumnya yang terhapus telah diganti otomatis di <#${syncRes.channelId}> (\`ID: ${syncRes.panelMessageId}\`).`;
+                } else {
+                    noticeText = `🔄 **Panel Berhasil Diperbarui!** Tampilan panel di <#${syncRes.channelId}> telah disinkronkan tanpa mengirim pesan duplikat.`;
+                }
+
+                const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                    config: syncRes.config,
+                    noticeType: "success",
+                    noticeMessage: noticeText,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
             if (action === "cfg_toggle_enabled") {
                 const nextVal = !currentConfig.customRoleEnabled;
-                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                let saved = await saveGuildCustomRoleConfig(client, guild.id, {
                     customRoleEnabled: nextVal,
                     updatedBy: adminId,
                 });
+                if (saved.channelId) {
+                    const syncRes = await syncCustomRolePanel(client, guild, { forceResend: false, recreateIfMissing: true });
+                    if (syncRes.ok && syncRes.config) saved = syncRes.config;
+                }
                 const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
                     config: saved,
                     noticeType: nextVal ? "success" : "warning",
@@ -2812,10 +3963,14 @@ async function handleAdminConfigInteraction(client, guild, interaction, action, 
 
             if (action === "cfg_toggle_booster") {
                 const nextVal = !currentConfig.boosterAccessEnabled;
-                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                let saved = await saveGuildCustomRoleConfig(client, guild.id, {
                     boosterAccessEnabled: nextVal,
                     updatedBy: adminId,
                 });
+                if (saved.channelId) {
+                    const syncRes = await syncCustomRolePanel(client, guild, { forceResend: false, recreateIfMissing: true });
+                    if (syncRes.ok && syncRes.config) saved = syncRes.config;
+                }
                 const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
                     config: saved,
                     noticeType: "success",
@@ -2829,14 +3984,17 @@ async function handleAdminConfigInteraction(client, guild, interaction, action, 
 
             if (action === "cfg_toggle_role") {
                 const nextVal = !currentConfig.roleAccessEnabled;
-                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                let saved = await saveGuildCustomRoleConfig(client, guild.id, {
                     roleAccessEnabled: nextVal,
                     updatedBy: adminId,
                 });
+                if (saved.channelId) {
+                    const syncRes = await syncCustomRolePanel(client, guild, { forceResend: false, recreateIfMissing: true });
+                    if (syncRes.ok && syncRes.config) saved = syncRes.config;
+                }
                 const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
                     config: saved,
-                    noticeType: "success",
-                    noticeMessage: nextVal
+                    noticeType: nextVal
                         ? "🎭 **Akses Role Khusus DIAKTIFKAN!** Member yang memiliki salah satu role pada daftar izin dapat menggunakan Custom Role."
                         : "🔒 **Akses Role Khusus DINONAKTIFKAN.**",
                 });
@@ -2884,11 +4042,16 @@ async function handleAdminConfigInteraction(client, guild, interaction, action, 
 
                 const mergedRoles = [...new Set([...currentConfig.allowedRoles, ...validPicked])].slice(0, MAX_ALLOWED_ROLES_PER_GUILD);
 
-                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                let saved = await saveGuildCustomRoleConfig(client, guild.id, {
                     allowedRoles: mergedRoles,
                     roleAccessEnabled: true,
                     updatedBy: adminId,
                 });
+
+                if (saved.channelId) {
+                    const syncRes = await syncCustomRolePanel(client, guild, { forceResend: false, recreateIfMissing: true });
+                    if (syncRes.ok && syncRes.config) saved = syncRes.config;
+                }
 
                 const addedMentions = validPicked.map((id) => `<@&${id}>`).join(", ");
                 const warnNotes = [];
@@ -2907,10 +4070,14 @@ async function handleAdminConfigInteraction(client, guild, interaction, action, 
             if (action === "cfg_remove_roles") {
                 const toRemove = new Set((interaction.values || []).map(String));
                 const remaining = currentConfig.allowedRoles.filter((id) => !toRemove.has(String(id)));
-                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                let saved = await saveGuildCustomRoleConfig(client, guild.id, {
                     allowedRoles: remaining,
                     updatedBy: adminId,
                 });
+                if (saved.channelId) {
+                    const syncRes = await syncCustomRolePanel(client, guild, { forceResend: false, recreateIfMissing: true });
+                    if (syncRes.ok && syncRes.config) saved = syncRes.config;
+                }
                 const removedText = [...toRemove].map((id) => `<@&${id}>`).join(", ");
                 const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
                     config: saved,
@@ -2922,10 +4089,14 @@ async function handleAdminConfigInteraction(client, guild, interaction, action, 
             }
 
             if (action === "cfg_clear_roles") {
-                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                let saved = await saveGuildCustomRoleConfig(client, guild.id, {
                     allowedRoles: [],
                     updatedBy: adminId,
                 });
+                if (saved.channelId) {
+                    const syncRes = await syncCustomRolePanel(client, guild, { forceResend: false, recreateIfMissing: true });
+                    if (syncRes.ok && syncRes.config) saved = syncRes.config;
+                }
                 const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
                     config: saved,
                     noticeType: "success",
@@ -3051,7 +4222,7 @@ async function handleCustomRoleInteraction(client, interaction) {
 
     if (!guild) {
         await safeReply(interaction, {
-            content: "⚠️ Data server ini belum siap. Silakan jalankan kembali `/customrole`.",
+            content: "⚠️ Data server ini belum siap. Silakan coba beberapa saat lagi.",
             flags: MessageFlags.Ephemeral,
         });
         return true;
@@ -3062,7 +4233,7 @@ async function handleCustomRoleInteraction(client, interaction) {
             .setColor(CR_COLORS.ERROR)
             .setTitle("🔒 AKSES DITOLAK — BUKAN MILIKMU")
             .setDescription(
-                "Setiap member hanya boleh mengelola Custom Role miliknya sendiri. Silakan jalankan `/customrole` untuk membuka dashboard milikmu.",
+                "Setiap member hanya boleh mengelola Custom Role miliknya sendiri. Silakan gunakan tombol pada **Panel Custom Role** untuk membuka sesi pribadimu.",
             )
             .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
             .setTimestamp();
@@ -3082,7 +4253,7 @@ async function handleCustomRoleInteraction(client, interaction) {
         stopActiveImageCollector(guild.id, String(interaction.user.id), "access_revoked");
         clearDraft(client, guild.id, String(interaction.user.id));
 
-        const deniedEmbed = buildCustomRoleAccessDeniedEmbed(client, access.code);
+        const deniedEmbed = buildCustomRoleAccessDeniedEmbed(client, access.code, access.config);
         await safeReply(interaction, { embeds: [deniedEmbed], flags: MessageFlags.Ephemeral });
         return true;
     }
@@ -3092,31 +4263,206 @@ async function handleCustomRoleInteraction(client, interaction) {
     const config = access.config;
 
     // ------------------------------------------------------------------------
+    // 0. Permanent Public Panel Buttons (`panel_create`, `panel_manage`, `panel_delete`)
+    //    ALWAYS deferReply Ephemeral so the public panel in the channel is NEVER overwritten!
+    // ------------------------------------------------------------------------
+    if (action === "panel_create" || action === "panel_manage" || action === "panel_delete") {
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return true;
+
+        return withCustomRoleLock(guild.id, userId, async () => {
+            let roleCtx = await resolveUserRoleContext(client, guild, userId);
+
+            // Proactively clean orphan DB records whose Discord role was deleted manually outside the bot
+            if (roleCtx.orphanPairs.length > 0 && action !== "panel_delete") {
+                for (const orphan of roleCtx.orphanPairs) {
+                    await deleteCustomRoleRecord(client, guild.id, userId, orphan.record.roleId).catch(() => {});
+                }
+                roleCtx = await resolveUserRoleContext(client, guild, userId);
+            }
+
+            if (action === "panel_create") {
+                const maxAllowed = config.maxRolesPerMember || 1;
+                if (roleCtx.activePairs.length >= maxAllowed) {
+                    const quotaEmbed = new EmbedBuilder()
+                        .setColor(CR_COLORS.WARNING)
+                        .setTitle("⚠️ BATAS CUSTOM ROLE TERCAPAI")
+                        .setDescription(
+                            [
+                                `Kamu sudah memiliki **${roleCtx.activePairs.length}/${maxAllowed}** Custom Role aktif sesuai batas server **${escapeMarkdown(guild.name)}**.`,
+                                "",
+                                "Tekan tombol **Kelola Custom Role Milikku** di bawah atau tombol **`MANAGE ROLE`** pada panel untuk mengubah nama, warna, gradasi, atau ikon role milikmu.",
+                            ].join("\n"),
+                        )
+                        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+                        .setTimestamp();
+
+                    const manageRow = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`${CR_PREFIX}:cancel:${userId}`)
+                            .setLabel("Kelola Custom Role Milikku")
+                            .setEmoji("🎛️")
+                            .setStyle(ButtonStyle.Primary),
+                    );
+
+                    await safeEditReply(interaction, { embeds: [quotaEmbed], components: [manageRow], files: [] });
+                    return true;
+                }
+
+                const createStudio = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                    config,
+                    roleCtx,
+                });
+                await safeEditReply(interaction, createStudio);
+                return true;
+            }
+
+            if (action === "panel_manage") {
+                if (roleCtx.activePairs.length === 0) {
+                    const emptyEmbed = new EmbedBuilder()
+                        .setColor(CR_COLORS.WARNING)
+                        .setTitle("ℹ️ BELUM MEMILIKI CUSTOM ROLE")
+                        .setDescription(
+                            [
+                                `Kamu belum memiliki **Custom Role** aktif di server **${escapeMarkdown(guild.name)}**.`,
+                                "",
+                                "Tekan tombol **Buat Custom Role Sekarang** di bawah atau tombol **`CREATE ROLE`** pada panel untuk membuat role pribadimu!",
+                            ].join("\n"),
+                        )
+                        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+                        .setTimestamp();
+
+                    const createRow = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder()
+                            .setCustomId(`${CR_PREFIX}:open_create_studio:${userId}`)
+                            .setLabel("Buat Custom Role Sekarang")
+                            .setEmoji("➕")
+                            .setStyle(ButtonStyle.Success),
+                    );
+
+                    await safeEditReply(interaction, { embeds: [emptyEmbed], components: [createRow], files: [] });
+                    return true;
+                }
+
+                const manageDashboard = await buildCustomRoleDashboard(client, guild, interaction.user, {
+                    config,
+                    roleCtx,
+                    canManageConfig: canManage,
+                });
+                await safeEditReply(interaction, manageDashboard);
+                return true;
+            }
+
+            if (action === "panel_delete") {
+                if (roleCtx.pairs.length === 0 || !roleCtx.selectedRecord) {
+                    const noRoleEmbed = new EmbedBuilder()
+                        .setColor(CR_COLORS.WARNING)
+                        .setTitle("ℹ️ TIDAK ADA CUSTOM ROLE UNTUK DIHAPUS")
+                        .setDescription(
+                            `Kamu belum memiliki **Custom Role** terdaftar di server **${escapeMarkdown(guild.name)}**. Tekan tombol **\`CREATE ROLE\`** pada panel jika ingin membuat Custom Role baru.`,
+                        )
+                        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+                        .setTimestamp();
+
+                    await safeEditReply(interaction, { embeds: [noRoleEmbed], components: [], files: [] });
+                    return true;
+                }
+
+                const confirmPanel = buildDeleteConfirmPanel(
+                    client,
+                    userId,
+                    roleCtx.selectedRecord,
+                    roleCtx.selectedLiveRole,
+                    roleCtx.pairs,
+                );
+                await safeEditReply(interaction, confirmPanel);
+                return true;
+            }
+
+            return true;
+        });
+    }
+
+    // ------------------------------------------------------------------------
     // 1. Actions that MUST open a Modal immediately (BEFORE deferUpdate!)
     // ------------------------------------------------------------------------
     const selectedMenuAction = action === "menu" ? interaction.values?.[0] : null;
 
-    if (selectedMenuAction === "create" || action === "quick_create") {
-        const roleCtx = await resolveUserRoleContext(client, guild, userId);
-        const maxAllowed = config.maxRolesPerMember || 1;
+    if (action === "create_name_modal") {
+        const draft = getOrInitDraft(client, guild.id, userId);
+        await safeShowModal(interaction, createDraftNameModal(userId, draft.createDraft.roleName, false));
+        return true;
+    }
 
-        if (roleCtx.activePairs.length >= maxAllowed) {
-            const ack = await safeDeferUpdate(interaction);
-            if (!ack) return true;
+    if (action === "create_hex_modal") {
+        const draft = getOrInitDraft(client, guild.id, userId);
+        await safeShowModal(interaction, createDraftHexModal(userId, draft.createDraft.colorHex || "#00E5FF"));
+        return true;
+    }
 
-            const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                config,
-                roleCtx,
-                canManageConfig: canManage,
-                noticeType: "warning",
-                noticeMessage: `⚠️ Kamu sudah mencapai batas maksimal Custom Role di server ini (**${roleCtx.activePairs.length}/${maxAllowed}** Custom Role). Gunakan menu **Ubah Nama**, **Ubah Warna**, **Atur Gradasi**, atau **Atur Gambar Role** untuk mengelola role milikmu.`,
+    if (action === "create_grad_modal") {
+        const capabilities = detectGuildCustomRoleCapabilities(guild);
+        if (!capabilities.hasEnhancedRoleColors) {
+            await safeReply(interaction, {
+                content: "⚠️ Server ini belum memiliki fitur `Enhanced Role Styles` Discord untuk menerapkan gradasi role.",
+                flags: MessageFlags.Ephemeral,
             });
-            await safeEditReply(interaction, panel);
             return true;
         }
-
-        await safeShowModal(interaction, createRoleCreationModal(userId));
+        const draft = getOrInitDraft(client, guild.id, userId);
+        const colors = draft.createDraft.gradient?.colors || [draft.createDraft.colorHex || "#00E5FF", "#5865F2"];
+        await safeShowModal(interaction, createDraftGradientModal(userId, colors));
         return true;
+    }
+
+    if (action === "create_icon_modal") {
+        const capabilities = detectGuildCustomRoleCapabilities(guild);
+        if (!capabilities.hasRoleIcons) {
+            await safeReply(interaction, {
+                content: "⚠️ Server ini membutuhkan **Server Boost Level 2 (`ROLE_ICONS`)** untuk memasang ikon role di Discord.",
+                flags: MessageFlags.Ephemeral,
+            });
+            return true;
+        }
+        await safeShowModal(interaction, createDraftIconModal(userId));
+        return true;
+    }
+
+    if (action === "create_submit") {
+        const draft = getOrInitDraft(client, guild.id, userId);
+        if (!String(draft.createDraft?.roleName || "").trim()) {
+            await safeShowModal(interaction, createDraftNameModal(userId, "", true));
+            return true;
+        }
+    }
+
+    if (selectedMenuAction === "create" || action === "quick_create") {
+        const ack = await safeDeferUpdate(interaction);
+        if (!ack) return true;
+
+        return withCustomRoleLock(guild.id, userId, async () => {
+            const roleCtx = await resolveUserRoleContext(client, guild, userId);
+            const maxAllowed = config.maxRolesPerMember || 1;
+
+            if (roleCtx.activePairs.length >= maxAllowed) {
+                const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
+                    config,
+                    roleCtx,
+                    canManageConfig: canManage,
+                    noticeType: "warning",
+                    noticeMessage: `⚠️ Kamu sudah mencapai batas maksimal Custom Role di server ini (**${roleCtx.activePairs.length}/${maxAllowed}** Custom Role). Gunakan menu **Ubah Nama**, **Ubah Warna**, **Atur Gradasi**, atau **Atur Gambar Role** untuk mengelola role milikmu.`,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            const createStudio = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                config,
+                roleCtx,
+            });
+            await safeEditReply(interaction, createStudio);
+            return true;
+        });
     }
 
     if (selectedMenuAction === "rename" || action === "quick_rename") {
@@ -3503,6 +4849,156 @@ async function handleCustomRoleInteraction(client, interaction) {
                 return true;
             }
 
+            if (action === "modal_create_name") {
+                const rawName = interaction.fields.getTextInputValue("role_name");
+                const nameCheck = validateCustomRoleName(guild, rawName);
+                if (!nameCheck.valid) {
+                    const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                        config,
+                        noticeType: "error",
+                        noticeMessage: `❌ **Nama Role Tidak Valid:**\n${nameCheck.message}`,
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const draft = getOrInitDraft(client, guild.id, userId);
+                draft.createDraft.roleName = nameCheck.name;
+
+                const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                    config,
+                    noticeType: "success",
+                    noticeMessage: `✅ Nama role **${escapeMarkdown(nameCheck.name)}** disimpan pada draft! Atur warna/gradasi/ikon atau tekan **BUAT ROLE SEKARANG**.`,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "modal_create_finalize") {
+                const rawName = interaction.fields.getTextInputValue("role_name");
+                const draft = getOrInitDraft(client, guild.id, userId);
+                draft.createDraft.roleName = String(rawName || "").trim();
+                return executeRoleCreationFromDraft(client, guild, interaction, config, canManage, rawName);
+            }
+
+            if (action === "modal_create_hex") {
+                const rawHex = interaction.fields.getTextInputValue("hex_value");
+                const parsed = parseAndValidateHexColor(rawHex);
+                if (!parsed.valid) {
+                    const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                        config,
+                        noticeType: "error",
+                        noticeMessage: `❌ ${parsed.message}`,
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const draft = getOrInitDraft(client, guild.id, userId);
+                draft.createDraft.colorHex = parsed.hex;
+                if (draft.createDraft.gradient) {
+                    draft.createDraft.gradient.enabled = false;
+                }
+
+                const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                    config,
+                    noticeType: "success",
+                    noticeMessage: `🎨 Warna HEX \`${parsed.hex}\` berhasil dimuat ke preview pembuatan role!`,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "modal_create_grad") {
+                const capabilities = detectGuildCustomRoleCapabilities(guild);
+                if (!capabilities.hasEnhancedRoleColors) {
+                    const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                        config,
+                        noticeType: "warning",
+                        noticeMessage: "⚠️ Server ini belum memiliki fitur `Enhanced Role Styles` Discord.",
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const h1 = interaction.fields.getTextInputValue("grad_hex_1");
+                const h2 = interaction.fields.getTextInputValue("grad_hex_2");
+                const p1 = parseAndValidateHexColor(h1);
+                const p2 = parseAndValidateHexColor(h2);
+
+                if (!p1.valid || !p2.valid) {
+                    const errMsg = !p1.valid ? p1.message : p2.message;
+                    const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                        config,
+                        noticeType: "error",
+                        noticeMessage: `❌ ${errMsg}`,
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const draft = getOrInitDraft(client, guild.id, userId);
+                draft.createDraft.colorHex = p1.hex;
+                draft.createDraft.gradient = {
+                    enabled: true,
+                    mode: "two_color",
+                    colors: [p1.hex, p2.hex],
+                    direction: "horizontal",
+                };
+
+                const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                    config,
+                    noticeType: "success",
+                    noticeMessage: `🌈 Gradasi \`${p1.hex}\` → \`${p2.hex}\` berhasil dimuat ke preview pembuatan role!`,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "modal_create_icon") {
+                const capabilities = detectGuildCustomRoleCapabilities(guild);
+                if (!capabilities.hasRoleIcons) {
+                    const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                        config,
+                        noticeType: "warning",
+                        noticeMessage: "⚠️ Server ini membutuhkan **Server Boost Level 2 (`ROLE_ICONS`)** untuk memasang ikon role.",
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const uploadedCollection =
+                    typeof interaction.fields.getUploadedFiles === "function"
+                        ? interaction.fields.getUploadedFiles("role_icon_file")
+                        : null;
+                const attachment = uploadedCollection?.first?.() || null;
+
+                const validation = await validateAndDownloadRoleImage(attachment, true);
+                if (!validation.valid) {
+                    const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                        config,
+                        noticeType: "error",
+                        noticeMessage: `❌ **Validasi Ikon Gagal:**\n${validation.message}`,
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const draft = getOrInitDraft(client, guild.id, userId);
+                draft.createDraft.pendingImage = {
+                    buffer: validation.buffer,
+                    meta: validation.meta,
+                };
+
+                const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                    config,
+                    noticeType: "success",
+                    noticeMessage: `🖼️ Ikon role \`${escapeInline(validation.meta.fileName)}\` berhasil divalidasi dan siap dipasang saat role dibuat!`,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
             return true;
         });
     }
@@ -3514,6 +5010,245 @@ async function handleCustomRoleInteraction(client, interaction) {
     if (!acknowledged) return true;
 
     return withCustomRoleLock(guild.id, userId, async () => {
+        if (action === "open_create_studio") {
+            const roleCtx = await resolveUserRoleContext(client, guild, userId);
+            const maxAllowed = config.maxRolesPerMember || 1;
+            if (roleCtx.activePairs.length >= maxAllowed) {
+                const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
+                    config,
+                    roleCtx,
+                    canManageConfig: canManage,
+                    noticeType: "warning",
+                    noticeMessage: `⚠️ Kamu sudah mencapai batas maksimal Custom Role di server ini (**${roleCtx.activePairs.length}/${maxAllowed}** Custom Role).`,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            const createStudio = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                config,
+                roleCtx,
+            });
+            await safeEditReply(interaction, createStudio);
+            return true;
+        }
+
+        if (
+            action === "create_color_preset" ||
+            action === "create_grad_preset" ||
+            action === "create_icon_chat" ||
+            action === "create_reset" ||
+            action === "create_submit"
+        ) {
+            const draft = getOrInitDraft(client, guild.id, userId);
+            const capabilities = detectGuildCustomRoleCapabilities(guild);
+
+            if (action === "create_color_preset") {
+                const pickedHex = interaction.values?.[0] || "#00E5FF";
+                draft.createDraft.colorHex = pickedHex;
+                if (draft.createDraft.gradient) {
+                    draft.createDraft.gradient.enabled = false;
+                }
+                const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                    config,
+                    noticeType: "success",
+                    noticeMessage: `🎨 Warna preset \`${pickedHex}\` dipilih!`,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "create_grad_preset") {
+                const val = interaction.values?.[0] || "off";
+                if (val === "off" || !capabilities.hasEnhancedRoleColors) {
+                    draft.createDraft.gradient = null;
+                    const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                        config,
+                        noticeMessage: "⚪ Mode gradasi dinonaktifkan (menggunakan warna solid).",
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const chosen = GRADIENT_PRESETS.find((gp) => gp.id === val);
+                if (chosen) {
+                    draft.createDraft.colorHex = chosen.colors[0];
+                    draft.createDraft.gradient = {
+                        enabled: true,
+                        mode: chosen.mode,
+                        colors: [...chosen.colors],
+                        direction: "horizontal",
+                    };
+                }
+
+                const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                    config,
+                    noticeType: "success",
+                    noticeMessage: `🌈 Paket gradasi **${chosen?.label || ""}** berhasil dipilih!`,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "create_reset") {
+                stopActiveImageCollector(guild.id, userId, "reset");
+                resetCreateDraft(client, guild.id, userId);
+                const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                    config,
+                    noticeMessage: "🔄 Draft pembuatan Custom Role telah direset ke pengaturan awal.",
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "create_icon_chat") {
+                if (!capabilities.hasRoleIcons) {
+                    const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                        config,
+                        noticeType: "warning",
+                        noticeMessage: "⚠️ Server ini membutuhkan **Server Boost Level 2 (`ROLE_ICONS`)** untuk memasang ikon role.",
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                if (!interaction.channel || typeof interaction.channel.createMessageCollector !== "function") {
+                    const panel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                        config,
+                        noticeType: "error",
+                        noticeMessage: "⚠️ Channel ini tidak mendukung pembacaan lampiran chat. Gunakan tombol **🖼️ Upload Ikon**.",
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const existingKey = `${guild.id}:${userId}`;
+                stopActiveImageCollector(guild.id, userId, "replaced");
+
+                const collector = interaction.channel.createMessageCollector({
+                    filter: (m) => m.author?.id === userId && m.attachments?.size > 0,
+                    max: 1,
+                    time: 60_000,
+                });
+                activeChatUploadCollectors.set(existingKey, collector);
+
+                collector.on("collect", async (msg) => {
+                    activeChatUploadCollectors.delete(existingKey);
+
+                    const freshMember = await resolveGuildMember(guild, userId, msg.member);
+                    const freshConfig = await getGuildCustomRoleConfig(client, guild.id);
+                    const freshCheck = evaluateMemberEligibilityWithConfig(
+                        guild,
+                        freshConfig,
+                        freshMember,
+                        msg.member,
+                        canManageCustomRoleConfig(freshMember || interaction, guild),
+                    );
+
+                    if (!freshCheck.allowed) {
+                        clearDraft(client, guild.id, userId);
+                        const deniedEmbed = buildCustomRoleAccessDeniedEmbed(client, freshCheck.code, freshConfig);
+                        await safeEditReply(interaction, { embeds: [deniedEmbed], components: [], files: [] });
+                        return;
+                    }
+
+                    const att = msg.attachments.first();
+                    const validation = await validateAndDownloadRoleImage(att, true);
+                    if (!validation.valid) {
+                        const errPanel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                            config: freshConfig,
+                            noticeType: "error",
+                            noticeMessage: `❌ **Validasi Ikon Gagal:**\n${validation.message}`,
+                        });
+                        await safeEditReply(interaction, errPanel);
+                        return;
+                    }
+
+                    draft.createDraft.pendingImage = {
+                        buffer: validation.buffer,
+                        meta: validation.meta,
+                    };
+
+                    const okPanel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                        config: freshConfig,
+                        noticeType: "success",
+                        noticeMessage: "✅ **Ikon dari Attachment Berhasil Diterima!** Tekan **BUAT ROLE SEKARANG** untuk membuat role.",
+                    });
+                    await safeEditReply(interaction, okPanel);
+                });
+
+                collector.on("end", (_, reason) => {
+                    if (activeChatUploadCollectors.get(existingKey) === collector) {
+                        activeChatUploadCollectors.delete(existingKey);
+                    }
+                    if (reason === "time") {
+                        buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                            config,
+                            noticeMessage: "⌛ Waktu tunggu unggah ikon lewat chat (60 detik) berakhir.",
+                        })
+                            .then((timeoutPanel) => safeEditReply(interaction, timeoutPanel))
+                            .catch(() => {});
+                    }
+                });
+
+                const waitingPanel = await buildCreateRoleStudioPanel(client, guild, interaction.user, {
+                    config,
+                    noticeMessage:
+                        "📲 **Menunggu Attachment Gambar (60 Detik):** Kirim gambar **PNG / JPG / JPEG / WEBP** (maks. **256 KB**) ke chat ini!",
+                });
+                await safeEditReply(interaction, waitingPanel);
+                return true;
+            }
+
+            if (action === "create_submit") {
+                return executeRoleCreationFromDraft(client, guild, interaction, config, canManage);
+            }
+        }
+
+        if (action === "delete_select_role") {
+            const pickedRoleId = interaction.values?.[0] || null;
+            const draft = getOrInitDraft(client, guild.id, userId);
+            draft.selectedRoleId = pickedRoleId;
+
+            const roleCtx = await resolveUserRoleContext(client, guild, userId);
+            if (!roleCtx.selectedRecord) {
+                const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
+                    config,
+                    canManageConfig: canManage,
+                    noticeType: "warning",
+                    noticeMessage: "ℹ️ Custom Role tidak ditemukan.",
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            const confirmPanel = buildDeleteConfirmPanel(client, userId, roleCtx.selectedRecord, roleCtx.selectedLiveRole, roleCtx.pairs);
+            await safeEditReply(interaction, confirmPanel);
+            return true;
+        }
+
+        if (action === "delete_cancel") {
+            const roleCtx = await resolveUserRoleContext(client, guild, userId);
+            if (roleCtx.activePairs.length > 0) {
+                const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
+                    config,
+                    roleCtx,
+                    canManageConfig: canManage,
+                    noticeMessage: "↩️ Penghapusan Custom Role dibatalkan.",
+                });
+                await safeEditReply(interaction, panel);
+            } else {
+                const cancelledEmbed = new EmbedBuilder()
+                    .setColor(CR_COLORS.PRIMARY)
+                    .setTitle("↩️ PENGHAPUSAN DIBATALKAN")
+                    .setDescription("Penghapusan Custom Role telah dibatalkan. Tidak ada perubahan yang dilakukan.")
+                    .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+                    .setTimestamp();
+                await safeEditReply(interaction, { embeds: [cancelledEmbed], components: [], files: [] });
+            }
+            return true;
+        }
+
         if (action === "cancel") {
             stopActiveImageCollector(guild.id, userId, "cancelled");
             clearEditDraftFields(client, guild.id, userId);
@@ -3588,7 +5323,7 @@ async function handleCustomRoleInteraction(client, interaction) {
             }
 
             if (navTarget === "delete") {
-                const panel = buildDeleteConfirmPanel(client, userId, record, liveRole);
+                const panel = buildDeleteConfirmPanel(client, userId, record, liveRole, found.roleCtx.pairs);
                 await safeEditReply(interaction, panel);
                 return true;
             }
@@ -4118,7 +5853,7 @@ async function handleCustomRoleInteraction(client, interaction) {
             }
         }
 
-        // Delete Custom Role Confirmation (Strictly owner-only)
+        // Delete Custom Role Confirmation (Strictly owner-only & strictly Custom-Role-owned)
         if (action === "delete_confirm") {
             const roleCtx = await resolveUserRoleContext(client, guild, userId);
             const targetId = extraTargetRoleId || roleCtx.selectedRecord?.roleId;
@@ -4127,27 +5862,60 @@ async function handleCustomRoleInteraction(client, interaction) {
             );
 
             if (!targetPair) {
-                const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                    config,
-                    canManageConfig: canManage,
-                    noticeType: "warning",
-                    noticeMessage: "ℹ️ Custom Role tersebut tidak ditemukan atau bukan milik Anda.",
-                });
-                await safeEditReply(interaction, panel);
+                const deniedDeleteEmbed = new EmbedBuilder()
+                    .setColor(CR_COLORS.WARNING)
+                    .setTitle("⚠️ CUSTOM ROLE TIDAK DITEMUKAN")
+                    .setDescription("Custom Role tersebut tidak ditemukan atau bukan milik Anda.")
+                    .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+                    .setTimestamp();
+                await safeEditReply(interaction, { embeds: [deniedDeleteEmbed], components: [], files: [] });
                 return true;
             }
 
             const { record, liveRole } = targetPair;
+
+            // Extra DB verification: NEVER delete a role that is not registered in MongoDB as THIS user's Custom Role!
+            if (isMongoReady()) {
+                const verifiedDbRec = await getGuildCustomRoleByRoleId(client, guild.id, record.roleId);
+                if (
+                    !verifiedDbRec ||
+                    String(verifiedDbRec.guildId) !== String(guild.id) ||
+                    String(verifiedDbRec.userId) !== String(userId)
+                ) {
+                    const mismatchEmbed = new EmbedBuilder()
+                        .setColor(CR_COLORS.ERROR)
+                        .setTitle("🔒 PENGHAPUSAN DITOLAK")
+                        .setDescription(
+                            "Role tersebut tidak terdaftar sebagai Custom Role milik Anda di database sistem. Sistem tidak pernah menghapus role di luar Custom Role.",
+                        )
+                        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+                        .setTimestamp();
+                    await safeEditReply(interaction, { embeds: [mismatchEmbed], components: [], files: [] });
+                    return true;
+                }
+            }
+
             if (liveRole) {
+                if (String(liveRole.id) === String(guild.id) || liveRole.managed) {
+                    const invalidRoleEmbed = new EmbedBuilder()
+                        .setColor(CR_COLORS.ERROR)
+                        .setTitle("🔒 ROLE DILINDUNGI")
+                        .setDescription("Role sistem / integrasi tidak dapat dihapus oleh Custom Role System.")
+                        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+                        .setTimestamp();
+                    await safeEditReply(interaction, { embeds: [invalidRoleEmbed], components: [], files: [] });
+                    return true;
+                }
+
                 const botCheck = await validateBotRoleManagement(guild, liveRole);
                 if (!botCheck.valid) {
-                    const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        config,
-                        canManageConfig: canManage,
-                        noticeType: "error",
-                        noticeMessage: `❌ **Gagal Menghapus Role di Discord:**\n${botCheck.message}`,
-                    });
-                    await safeEditReply(interaction, panel);
+                    const errEmbed = new EmbedBuilder()
+                        .setColor(CR_COLORS.ERROR)
+                        .setTitle("❌ GAGAL MENGHAPUS ROLE DI DISCORD")
+                        .setDescription(botCheck.message)
+                        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+                        .setTimestamp();
+                    await safeEditReply(interaction, { embeds: [errEmbed], components: [], files: [] });
                     return true;
                 }
 
@@ -4161,13 +5929,41 @@ async function handleCustomRoleInteraction(client, interaction) {
             draft.selectedRoleId = null;
             clearEditDraftFields(client, guild.id, userId);
 
-            const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                config,
-                canManageConfig: canManage,
-                noticeType: "success",
-                noticeMessage: `🗑️ **Custom Role Berhasil Dihapus!** Role **${escapeMarkdown(record.roleName)}** dan datanya pada server ini telah dihapus dari Discord & MongoDB.`,
-            });
-            await safeEditReply(interaction, panel);
+            const remainingCtx = await resolveUserRoleContext(client, guild, userId);
+            if (remainingCtx.activePairs.length > 0) {
+                const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
+                    config,
+                    roleCtx: remainingCtx,
+                    canManageConfig: canManage,
+                    noticeType: "success",
+                    noticeMessage: `🗑️ **Custom Role Berhasil Dihapus!** Role **${escapeMarkdown(record.roleName)}** dan datanya pada server ini telah dihapus dari Discord & MongoDB.`,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            const deletedEmbed = new EmbedBuilder()
+                .setColor(CR_COLORS.SUCCESS)
+                .setTitle("🗑️ CUSTOM ROLE BERHASIL DIHAPUS")
+                .setDescription(
+                    [
+                        `Custom Role **${escapeMarkdown(record.roleName)}** milik <@${userId}> beserta seluruh datanya di MongoDB untuk server **${escapeMarkdown(guild.name)}** telah berhasil dihapus.`,
+                        "",
+                        "Kamu dapat membuat Custom Role baru kapan saja melalui tombol **`CREATE ROLE`** pada panel!",
+                    ].join("\n"),
+                )
+                .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+                .setTimestamp();
+
+            const recreateRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`${CR_PREFIX}:open_create_studio:${userId}`)
+                    .setLabel("Buat Custom Role Baru")
+                    .setEmoji("➕")
+                    .setStyle(ButtonStyle.Success),
+            );
+
+            await safeEditReply(interaction, { embeds: [deletedEmbed], components: [recreateRow], files: [] });
             return true;
         }
 
@@ -4195,9 +5991,14 @@ module.exports = {
     handleGuildMemberCustomRoleAccessUpdate,
     getGuildCustomRoleConfig,
     saveGuildCustomRoleConfig,
+    getGuildCustomRoleByRoleId,
     getUserCustomRoleRecords,
     saveUserCustomRoleRecord,
     deleteCustomRoleRecord,
+    buildCustomRolePublicPanel,
+    syncCustomRolePanel,
+    initializeCustomRolePanels,
+    buildCreateRoleStudioPanel,
     buildCustomRoleDashboard,
     buildCustomRoleConfigDashboard,
     handleCustomRoleInteraction,

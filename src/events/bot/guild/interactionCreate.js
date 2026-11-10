@@ -22,13 +22,46 @@ module.exports = async (client, interaction) => {
         return;
     }
 
-    // Handle interactive dashboard, Color/Gradient/Image studios, and Modals for `/customrole`
+    // Handle permanent Custom Role Panel buttons, interactive studios, `/customrole-config`, and Modals
     if (typeof interaction.customId === "string" && interaction.customId.startsWith("customrole:")) {
+        createDataGuild(client, interaction.guild).catch(() => {});
+        createDataUser(client, interaction.user).catch(() => {});
+
+        const bannedUser = client.data.get(`userData_${interaction.user.id}`);
+        if (bannedUser?.ban?.status) {
+            const banEmbed = new EmbedBuilder()
+                .setColor(client.config.embedColor)
+                .setDescription(
+                    `You have been banned from using the bot.\n\`\`\`${bannedUser.ban.reason}\`\`\`\nPlease contact the developer if you think this is a mistake.`,
+                );
+            await safeReply(interaction, {
+                embeds: [banEmbed],
+                components: buildSupportComponents(client, "Support Server"),
+                flags: MessageFlags.Ephemeral,
+            });
+            return;
+        }
+
+        if (client.data.get("maintenance") && !client.config.dev.includes(interaction.user.id)) {
+            const botName = client.config.botName || "Lagukan";
+            const maintEmbed = new EmbedBuilder()
+                .setColor(client.config.embedColor)
+                .setDescription(
+                    `${botName} is currently under maintenance. Please try again later.\nJoin our support server for more information.`,
+                );
+            await safeReply(interaction, {
+                embeds: [maintEmbed],
+                components: buildSupportComponents(client, "Support Server"),
+                flags: MessageFlags.Ephemeral,
+            });
+            return;
+        }
+
         try {
             await handleCustomRoleInteraction(client, interaction);
         } catch (err) {
             if (!isUnknownInteractionError(err)) {
-                Logger.error("[CustomRole] Error pada interaksi /customrole:", err);
+                Logger.error("[CustomRole] Error pada interaksi Custom Role:", err);
             }
         }
         return;
