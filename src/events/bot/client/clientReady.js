@@ -1,5 +1,6 @@
 const { ActivityType } = require("discord.js");
 const emojiConfig = require("../../../settings/emoji.js");
+const { normalizeGuildData } = require("../../../functions/createData.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client) => {
@@ -15,11 +16,31 @@ module.exports = async (client) => {
 
     const guildData = await client.guildData.find();
 
-    guildData.forEach(async (x) => {
-        const { _id, __v, ...data } = x.toObject();
+    for (const x of guildData) {
+        const { _id, __v, ...raw } = x.toObject();
+        const guild = client.guilds.cache.get(x.id);
+        const normalized = normalizeGuildData(client, guild, raw);
 
-        client.data.set(`guildData_${x.id}`, data);
-    });
+        client.data.set(`guildData_${x.id}`, normalized);
+
+        if (guild) {
+            await client.guildData
+                .findOneAndUpdate({ id: x.id }, { $set: normalized }, { upsert: true, returnDocument: "after" })
+                .catch(() => {});
+        }
+    }
+
+    for (const [, guild] of client.guilds.cache) {
+        if (!client.data.has(`guildData_${guild.id}`)) {
+            const normalized = normalizeGuildData(client, guild, { id: guild.id });
+
+            client.data.set(`guildData_${guild.id}`, normalized);
+
+            await client.guildData
+                .findOneAndUpdate({ id: guild.id }, { $set: normalized }, { upsert: true, returnDocument: "after" })
+                .catch(() => {});
+        }
+    }
 
     const userData = await client.userData.find();
 

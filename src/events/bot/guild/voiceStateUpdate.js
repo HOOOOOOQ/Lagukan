@@ -1,6 +1,9 @@
 const { PermissionsBitField, EmbedBuilder } = require("discord.js");
+const { handleVoiceStateLog } = require("../../../functions/voiceLogger.js");
 
 module.exports = async (client, oldState, newState) => {
+    handleVoiceStateLog(client, oldState, newState).catch(() => {});
+
     if (newState.channelId && newState.channel.type == 13 && newState.guild.members.me.voice.suppress) {
         if (
             newState.guild.members.me.permissions.has(PermissionsBitField.Flags.Speak) ||

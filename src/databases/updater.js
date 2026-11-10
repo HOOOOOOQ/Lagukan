@@ -5,8 +5,9 @@ module.exports = async (client) => {
     const updateSettings = async (items, settingMap, dataModel, type) => {
         for (const item of items) {
             const setting = settingMap.get(`${type}_${item.id}`);
+            if (!setting) continue;
 
-            await dataModel.findOneAndUpdate({ id: item.id }, { $set: setting }, { upsert: true, new: true });
+            await dataModel.findOneAndUpdate({ id: item.id }, { $set: setting }, { upsert: true, returnDocument: "after" });
         }
     };
 

@@ -74,6 +74,7 @@ npm start
 - ☑️ Per-user ban system and maintenance mode (dev prefix commands)
 - ☑️ MongoDB-backed guild/user state with periodic sync
 - ☑️ Lyrics lookup for current song (`/lyric`)
+- ☑️ Voice Channel Activity Logger (`Joined` & `Leaving` directly in active Voice Channel Text Chat) with per-guild settings (`/voicelog`)
 - ☑️ Auto-leave timeout when inactive/alone (configurable)
 
 ## `📌` Requirements
@@ -90,7 +91,7 @@ npm start
 | --- | --- |
 | General | `/help`, `/ping` |
 | Music | `/play`, `/queue`, `/skip`, `/previous`, `/pause`, `/resume`, `/stop`, `/seek`, `/remove`, `/clear`, `/shuffle`, `/loop`, `/filter`, `/volume`, `/join`, `/leave`, `/lyric` |
-| Settings | `/247`, `/autoplay` |
+| Settings | `/247`, `/autoplay`, `/voicelog` |
 
 ### Prefix Commands (Developer / Ops)
 
@@ -117,6 +118,13 @@ Create a `.env` file from `.env.example`.
 | `MONGO_URI`          | -         | MongoDB connection string                 |
 | `SUPPORT_SERVER_URL` | -         | Support button URL                        |
 | `DEBUG`              | `false`   | Enable debug logs when `true`             |
+
+### Voice Activity Logger
+
+| Key                 | Default        | Purpose                                                                            |
+| ------------------- | -------------- | ---------------------------------------------------------------------------------- |
+| `VOICE_LOG_ENABLED` | `true`         | Enable/disable Voice Activity Logger in active Voice Channel Chat (`true`/`false`) |
+| `TIMEZONE`          | `Asia/Jakarta` | Timezone for voice log timestamps (e.g. WIB)                                       |
 
 ### Lavalink Connection
 
