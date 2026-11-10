@@ -29,7 +29,8 @@ const customRoleSchema = new mongoose.Schema(
     },
 );
 
-customRoleSchema.index({ guildId: 1, userId: 1 }, { unique: true });
+customRoleSchema.index({ guildId: 1, roleId: 1 }, { unique: true });
+customRoleSchema.index({ guildId: 1, userId: 1 });
 
 module.exports = mongoose.models.customRole || mongoose.model("customRole", customRoleSchema);
 

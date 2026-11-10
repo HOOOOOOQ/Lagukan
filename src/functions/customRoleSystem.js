@@ -21,7 +21,7 @@ const {
     escapeMarkdown,
 } = require("discord.js");
 const CustomRoleModel = require("../databases/schema/customRole.js");
-const CustomRolePolicyModel = require("../databases/schema/customRolePolicy.js");
+const CustomRoleConfigModel = require("../databases/schema/customRoleConfig.js");
 const {
     safeDeferUpdate,
     safeDeferReply,
@@ -46,6 +46,8 @@ const CR_COLORS = {
 
 const MAX_DISCORD_ROLE_ICON_BYTES = 256 * 1024; // 256 KB official Discord Role Icon limit
 const MAX_PREVIEW_IMAGE_BYTES = 2 * 1024 * 1024; // 2 MB max preview image when server lacks ROLE_ICONS
+const MAX_ALLOWED_ROLES_PER_GUILD = 25;
+const MAX_ROLES_PER_MEMBER_CAP = 25;
 const ALLOWED_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
 const ALLOWED_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp"]);
 
@@ -134,9 +136,10 @@ const GRADIENT_DIRECTIONS = [
 const roleMutationLocks = new Map();
 const mutationCooldowns = new Map();
 const activeChatUploadCollectors = new Map();
+let legacyIndexChecked = false;
 
-function withCustomRoleLock(guildId, userId, task) {
-    const key = `${guildId}:${userId}`;
+function withCustomRoleLock(guildId, scopeId, task) {
+    const key = `${guildId}:${scopeId}`;
     const prev = roleMutationLocks.get(key) || Promise.resolve();
     const next = prev
         .catch(() => {})
@@ -346,7 +349,7 @@ function generateColorOrGradientPng(hexColors, direction = "horizontal", width =
 }
 
 // ============================================================================
-// Validation & Discord Feature Detection Helpers
+// Validation, Permissions & Discord Feature Detection Helpers
 // ============================================================================
 
 function isMongoReady() {
@@ -357,8 +360,8 @@ function getCustomRoleModel(client) {
     return client?.customRoleData || CustomRoleModel;
 }
 
-function getCustomRolePolicyModel(client) {
-    return client?.customRolePolicyData || CustomRolePolicyModel;
+function getCustomRoleConfigModel(client) {
+    return client?.customRoleConfigData || CustomRoleConfigModel;
 }
 
 function getBotAvatarUrl(client) {
@@ -378,9 +381,12 @@ function getOrInitDraft(client, guildId, userId) {
     let draft = client.data.get(key);
     if (!draft) {
         draft = {
+            selectedRoleId: null,
             colorHex: null,
             gradient: null,
             pendingImage: null,
+            adminSelectedRoleId: null,
+            adminPage: 0,
             updatedAt: Date.now(),
         };
         client.data.set(key, draft);
@@ -389,8 +395,52 @@ function getOrInitDraft(client, guildId, userId) {
     return draft;
 }
 
+function clearEditDraftFields(client, guildId, userId) {
+    const draft = client.data.get(getDraftKey(guildId, userId));
+    if (draft) {
+        draft.colorHex = null;
+        draft.gradient = null;
+        draft.pendingImage = null;
+        draft.updatedAt = Date.now();
+    }
+}
+
 function clearDraft(client, guildId, userId) {
     client.data.delete(getDraftKey(guildId, userId));
+}
+
+function stopActiveImageCollector(guildId, userId, reason = "revoked") {
+    const key = `${guildId}:${userId}`;
+    const existing = activeChatUploadCollectors.get(key);
+    if (existing) {
+        existing.stop(reason);
+        activeChatUploadCollectors.delete(key);
+    }
+}
+
+async function ensureCustomRoleIndexes(RoleModel) {
+    if (legacyIndexChecked || !isMongoReady()) return;
+    if (typeof RoleModel?.collection?.indexes !== "function") {
+        legacyIndexChecked = true;
+        return;
+    }
+
+    legacyIndexChecked = true;
+    try {
+        const indexes = await RoleModel.collection.indexes();
+        const legacyUnique = Array.isArray(indexes)
+            ? indexes.find((idx) => idx?.name === "guildId_1_userId_1" && idx?.unique === true)
+            : null;
+
+        if (legacyUnique && typeof RoleModel.collection.dropIndex === "function") {
+            await RoleModel.collection.dropIndex("guildId_1_userId_1").catch(() => {});
+            if (typeof RoleModel.syncIndexes === "function") {
+                await RoleModel.syncIndexes().catch(() => {});
+            }
+        }
+    } catch {
+        // Ignore on mocked collections or restricted MongoDB environments
+    }
 }
 
 async function withMongoTimeout(promise, ms = 8000) {
@@ -453,7 +503,6 @@ function parseAndValidateHexColor(rawInput) {
     }
 
     const upperHex = `#${expanded.toUpperCase()}`;
-    // Discord treats exact 0x000000 as "default transparent role color", so map #000000 to #010101 for true dark display
     const discordSafeHex = upperHex === "#000000" ? "#010101" : upperHex;
     const intColor = Number.parseInt(discordSafeHex.slice(1), 16);
 
@@ -549,9 +598,13 @@ function resolveInteractionPermissions(interactionOrMember, guild = null) {
     return new PermissionsBitField(0n);
 }
 
-function isUserAdminOrRoleManager(interactionOrMember, guild = null) {
+/**
+ * Only Administrator or ManageGuild (plus Server Owner) can configure Custom Role settings
+ * and hold full administrative Custom Role management access.
+ */
+function canManageCustomRoleConfig(interactionOrMember, guild = null) {
     const perms = resolveInteractionPermissions(interactionOrMember, guild);
-    return perms.has(PermissionsBitField.Flags.Administrator) || perms.has(PermissionsBitField.Flags.ManageRoles);
+    return perms.has(PermissionsBitField.Flags.Administrator) || perms.has(PermissionsBitField.Flags.ManageGuild);
 }
 
 function isUserStrictAdmin(interactionOrMember, guild = null) {
@@ -660,44 +713,60 @@ async function validateBotRoleManagement(guild, existingRole = null) {
 }
 
 // ============================================================================
-// MongoDB Policy & Custom Role Record Persistence (Multi-Server Isolated)
+// MongoDB Server Config & Custom Role Persistence (Multi-Server Isolated)
 // ============================================================================
 
-async function getGuildCustomRolePolicy(client, guildId) {
+function normalizeGuildCustomRoleConfig(guildId, doc = null) {
     const gId = String(guildId);
-    const cacheKey = `customRolePolicy_${gId}`;
+    const rawAllowed = Array.isArray(doc?.allowedRoles) ? doc.allowedRoles : [];
+    const dedupedRoles = [...new Set(rawAllowed.map((id) => String(id || "").trim()).filter((id) => id.length > 0 && id !== gId))].slice(
+        0,
+        MAX_ALLOWED_ROLES_PER_GUILD,
+    );
+
+    const parsedMax = Number.parseInt(doc?.maxRolesPerMember, 10);
+    const maxRolesPerMember = Number.isFinite(parsedMax) && parsedMax >= 1 ? Math.min(MAX_ROLES_PER_MEMBER_CAP, parsedMax) : 1;
+
+    return {
+        guildId: gId,
+        boosterAccessEnabled: typeof doc?.boosterAccessEnabled === "boolean" ? doc.boosterAccessEnabled : true,
+        roleAccessEnabled: typeof doc?.roleAccessEnabled === "boolean" ? doc.roleAccessEnabled : true,
+        allowedRoles: dedupedRoles,
+        maxRolesPerMember,
+        customRoleEnabled: typeof doc?.customRoleEnabled === "boolean" ? doc.customRoleEnabled : true,
+        updatedBy: doc?.updatedBy ? String(doc.updatedBy) : null,
+        updatedAt: doc?.updatedAt ? new Date(doc.updatedAt) : null,
+    };
+}
+
+async function getGuildCustomRoleConfig(client, guildId) {
+    const gId = String(guildId);
+    const cacheKey = `customRoleConfig_${gId}`;
     const cached = client.data.get(cacheKey);
     if (cached) return cached;
 
     if (isMongoReady()) {
-        const PolicyModel = getCustomRolePolicyModel(client);
-        const doc = await PolicyModel.findOne({ guildId: gId })
+        const ConfigModel = getCustomRoleConfigModel(client);
+        const doc = await ConfigModel.findOne({ guildId: gId })
             .lean()
-            .catch(() => null);
+            .catch((err) => {
+                Logger.error(`[CustomRole] Gagal membaca konfigurasi server (${gId}):`, err);
+                return null;
+            });
 
         if (doc) {
-            const normalized = {
-                guildId: gId,
-                accessMode: doc.accessMode || "admin_only",
-                requiredRoleId: doc.requiredRoleId ? String(doc.requiredRoleId) : null,
-                updatedBy: doc.updatedBy ? String(doc.updatedBy) : null,
-            };
+            const normalized = normalizeGuildCustomRoleConfig(gId, doc);
             client.data.set(cacheKey, normalized);
             return normalized;
         }
     }
 
-    const fallback = {
-        guildId: gId,
-        accessMode: "admin_only",
-        requiredRoleId: null,
-        updatedBy: null,
-    };
+    const fallback = normalizeGuildCustomRoleConfig(gId, null);
     client.data.set(cacheKey, fallback);
     return fallback;
 }
 
-async function saveGuildCustomRolePolicy(client, guildId, nextPolicy) {
+async function saveGuildCustomRoleConfig(client, guildId, partialUpdate) {
     const gId = String(guildId);
     if (!isMongoReady()) {
         const err = new Error("Database MongoDB sedang tidak terhubung. Pastikan variabel MONGO_URI aktif.");
@@ -705,16 +774,27 @@ async function saveGuildCustomRolePolicy(client, guildId, nextPolicy) {
         throw err;
     }
 
-    const PolicyModel = getCustomRolePolicyModel(client);
+    const current = await getGuildCustomRoleConfig(client, gId);
+    const merged = normalizeGuildCustomRoleConfig(gId, {
+        ...current,
+        ...partialUpdate,
+    });
+
+    const now = new Date();
+    const ConfigModel = getCustomRoleConfigModel(client);
     const saved = await withMongoTimeout(
-        PolicyModel.findOneAndUpdate(
+        ConfigModel.findOneAndUpdate(
             { guildId: gId },
             {
                 $set: {
                     guildId: gId,
-                    accessMode: nextPolicy.accessMode || "admin_only",
-                    requiredRoleId: nextPolicy.requiredRoleId || null,
-                    updatedBy: nextPolicy.updatedBy || null,
+                    boosterAccessEnabled: merged.boosterAccessEnabled,
+                    roleAccessEnabled: merged.roleAccessEnabled,
+                    allowedRoles: merged.allowedRoles,
+                    maxRolesPerMember: merged.maxRolesPerMember,
+                    customRoleEnabled: merged.customRoleEnabled,
+                    updatedBy: merged.updatedBy,
+                    updatedAt: now,
                 },
             },
             { upsert: true, returnDocument: "after" },
@@ -722,60 +802,238 @@ async function saveGuildCustomRolePolicy(client, guildId, nextPolicy) {
         8000,
     );
 
-    const normalized = {
-        guildId: gId,
-        accessMode: saved.accessMode || "admin_only",
-        requiredRoleId: saved.requiredRoleId ? String(saved.requiredRoleId) : null,
-        updatedBy: saved.updatedBy ? String(saved.updatedBy) : null,
-    };
-
-    client.data.set(`customRolePolicy_${gId}`, normalized);
+    const normalized = normalizeGuildCustomRoleConfig(gId, saved);
+    client.data.set(`customRoleConfig_${gId}`, normalized);
     return normalized;
 }
 
-async function checkCustomRoleAccess(client, guild, interaction) {
-    if (isUserAdminOrRoleManager(interaction, guild)) {
-        return { allowed: true, reason: null };
+// ============================================================================
+// Strict Booster & Allowed-Role Eligibility Engine
+// ============================================================================
+
+function getGuildBoosterRoleId(guild) {
+    if (!guild?.roles) return null;
+    if (guild.roles.premiumSubscriberRole?.id) {
+        return String(guild.roles.premiumSubscriberRole.id);
     }
-
-    const policy = await getGuildCustomRolePolicy(client, guild.id);
-    const member = await resolveGuildMember(guild, interaction.user.id, interaction.member);
-    const rawMemberRoles = Array.isArray(interaction.member?.roles) ? interaction.member.roles.map(String) : [];
-
-    const hasRole = (roleId) => Boolean(member?.roles?.cache?.has?.(String(roleId)) || rawMemberRoles.includes(String(roleId)));
-
-    if (policy.accessMode === "all_members") {
-        return { allowed: true, reason: null };
+    if (typeof guild.roles.cache?.find === "function") {
+        const found = guild.roles.cache.find((r) => Boolean(r?.tags?.premiumSubscriberRole));
+        if (found?.id) return String(found.id);
     }
+    return null;
+}
 
-    if (policy.accessMode === "boosters") {
-        const boosterRoleId = guild.roles?.premiumSubscriberRole?.id;
-        const isBooster = Boolean(member?.premiumSince || member?.premiumSinceTimestamp || (boosterRoleId && hasRole(boosterRoleId)));
+function extractLiveMemberSignals(guild, resolvedMember = null, rawInteractionMember = null) {
+    const boosterRoleId = getGuildBoosterRoleId(guild);
+    const roleIds = new Set();
+    let hasExplicitRoleList = false;
 
-        if (isBooster) return { allowed: true, reason: null };
-
-        return {
-            allowed: false,
-            reason: "Pada server ini, fitur **Custom Role** dikhususkan untuk **Server Booster** dan **Administrator**.",
-        };
-    }
-
-    if (policy.accessMode === "role_required" && policy.requiredRoleId) {
-        if (hasRole(policy.requiredRoleId)) {
-            return { allowed: true, reason: null };
+    // Prefer fresh interaction.member role list when Discord supplies it directly in the interaction payload
+    if (Array.isArray(rawInteractionMember?.roles)) {
+        hasExplicitRoleList = true;
+        for (const rId of rawInteractionMember.roles) {
+            roleIds.add(String(rId));
         }
+    } else if (rawInteractionMember?.roles?.cache) {
+        hasExplicitRoleList = true;
+        if (typeof rawInteractionMember.roles.cache.keys === "function") {
+            for (const rId of rawInteractionMember.roles.cache.keys()) {
+                roleIds.add(String(rId));
+            }
+        }
+    }
 
+    if (!hasExplicitRoleList && resolvedMember?.roles?.cache) {
+        if (typeof resolvedMember.roles.cache.keys === "function") {
+            for (const rId of resolvedMember.roles.cache.keys()) {
+                roleIds.add(String(rId));
+            }
+        }
+    }
+
+    const hasRole = (targetRoleId) => {
+        const rStr = String(targetRoleId);
+        if (roleIds.has(rStr)) return true;
+        if (!hasExplicitRoleList && resolvedMember?.roles?.cache?.has?.(rStr)) return true;
+        return false;
+    };
+
+    let premiumActive = false;
+    if (rawInteractionMember && ("premium_since" in rawInteractionMember || "premiumSince" in rawInteractionMember)) {
+        premiumActive = Boolean(
+            rawInteractionMember.premium_since || rawInteractionMember.premiumSince || rawInteractionMember.premiumSinceTimestamp,
+        );
+    } else if (resolvedMember) {
+        premiumActive = Boolean(resolvedMember.premiumSince || resolvedMember.premiumSinceTimestamp);
+    }
+
+    if (!premiumActive && boosterRoleId && hasRole(boosterRoleId)) {
+        premiumActive = true;
+    }
+
+    return {
+        isBooster: premiumActive,
+        hasRole,
+    };
+}
+
+function evaluateMemberEligibilityWithConfig(guild, config, resolvedMember = null, rawInteractionMember = null, isAdmin = false) {
+    if (isAdmin) {
+        return {
+            allowed: true,
+            isAdmin: true,
+            source: "admin",
+            code: "OK_ADMIN",
+        };
+    }
+
+    if (!config.customRoleEnabled) {
         return {
             allowed: false,
-            reason: `Pada server ini, Anda harus memiliki role <@&${policy.requiredRoleId}> atau izin **Manage Roles / Administrator** untuk membuat dan mengubah Custom Role.`,
+            isAdmin: false,
+            source: null,
+            code: "SYSTEM_DISABLED",
         };
+    }
+
+    const signals = extractLiveMemberSignals(guild, resolvedMember, rawInteractionMember);
+
+    if (config.boosterAccessEnabled && signals.isBooster) {
+        return {
+            allowed: true,
+            isAdmin: false,
+            source: "booster",
+            code: "OK_BOOSTER",
+        };
+    }
+
+    if (config.roleAccessEnabled && Array.isArray(config.allowedRoles) && config.allowedRoles.length > 0) {
+        const matchedRoleId = config.allowedRoles.find((rId) => String(rId) !== String(guild.id) && signals.hasRole(rId));
+
+        if (matchedRoleId) {
+            return {
+                allowed: true,
+                isAdmin: false,
+                source: "allowed_role",
+                matchedRoleId: String(matchedRoleId),
+                code: "OK_ROLE",
+            };
+        }
     }
 
     return {
         allowed: false,
-        reason: "Pada server ini, pembuatan dan pengaturan **Custom Role** saat ini dibatasi untuk **Administrator** atau pemilik izin **Manage Roles**. *(Admin dapat mengatur akses member melalui menu Pengaturan Izin di `/customrole`.)*",
+        isAdmin: false,
+        source: null,
+        code: "ACCESS_DENIED",
     };
 }
+
+async function checkCustomRoleAccess(client, guild, interaction) {
+    const config = await getGuildCustomRoleConfig(client, guild.id);
+    const isAdmin = canManageCustomRoleConfig(interaction, guild);
+
+    if (isAdmin) {
+        return {
+            allowed: true,
+            isAdmin: true,
+            source: "admin",
+            code: "OK_ADMIN",
+            config,
+        };
+    }
+
+    if (!config.customRoleEnabled) {
+        return {
+            allowed: false,
+            isAdmin: false,
+            source: null,
+            code: "SYSTEM_DISABLED",
+            config,
+        };
+    }
+
+    const resolvedMember = await resolveGuildMember(guild, interaction.user.id, interaction.member);
+    const result = evaluateMemberEligibilityWithConfig(guild, config, resolvedMember, interaction.member, false);
+
+    return {
+        ...result,
+        config,
+    };
+}
+
+function buildCustomRoleAccessDeniedEmbed(client, code = "ACCESS_DENIED") {
+    const botAvatar = getBotAvatarUrl(client);
+    const lines =
+        code === "SYSTEM_DISABLED"
+            ? [
+                  "Fitur Custom Role sedang dinonaktifkan oleh admin di server ini.",
+                  "",
+                  "Akses hanya tersedia untuk:",
+                  "",
+                  "- Server Booster.",
+                  "- Member dengan role khusus yang ditentukan admin.",
+              ]
+            : [
+                  "Kamu belum memiliki akses untuk menggunakan Custom Role.",
+                  "",
+                  "Akses hanya tersedia untuk:",
+                  "",
+                  "- Server Booster.",
+                  "- Member dengan role khusus yang ditentukan admin.",
+              ];
+
+    return new EmbedBuilder()
+        .setColor(CR_COLORS.ERROR)
+        .setTitle("🔒 AKSES CUSTOM ROLE DITOLAK")
+        .setDescription(lines.join("\n"))
+        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+        .setTimestamp();
+}
+
+function buildAdminConfigDeniedEmbed(client) {
+    const botAvatar = getBotAvatarUrl(client);
+    return new EmbedBuilder()
+        .setColor(CR_COLORS.ERROR)
+        .setTitle("🔒 AKSES PENGATURAN DITOLAK")
+        .setDescription(
+            "Hanya **Administrator** atau pengguna dengan izin **Manage Guild (Kelola Server)** yang dapat membuka dan mengubah `/customrole-config` di server ini.",
+        )
+        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+        .setTimestamp();
+}
+
+/**
+ * Real-time Gateway listener hook (`guildMemberUpdate`):
+ * When a member loses Server Booster status AND no longer holds any admin-configured allowed role,
+ * immediately revoke any active Custom Role management session/collector WITHOUT deleting their role!
+ */
+async function handleGuildMemberCustomRoleAccessUpdate(client, oldMember, newMember) {
+    try {
+        const guild = newMember?.guild || oldMember?.guild;
+        const userId = newMember?.id || newMember?.user?.id || oldMember?.id || oldMember?.user?.id;
+        if (!guild || !userId || newMember?.user?.bot) return;
+
+        const isAdmin = canManageCustomRoleConfig(newMember, guild);
+        if (isAdmin) return;
+
+        const config = await getGuildCustomRoleConfig(client, guild.id);
+        const currentStatus = evaluateMemberEligibilityWithConfig(guild, config, newMember, null, false);
+
+        if (!currentStatus.allowed) {
+            // Immediately revoke active upload collector & pending edit drafts,
+            // while strictly preserving the member's Discord role & MongoDB Custom Role record!
+            stopActiveImageCollector(guild.id, String(userId), "access_revoked");
+            clearDraft(client, guild.id, String(userId));
+        }
+    } catch (err) {
+        Logger.debug(`[CustomRole] Gagal memeriksa perubahan akses member: ${err?.message || err}`);
+    }
+}
+
+// ============================================================================
+// Multi-Role Custom Role Record Persistence (Per Guild + User + Role)
+// ============================================================================
 
 function normalizeCustomRoleDoc(doc) {
     if (!doc) return null;
@@ -806,36 +1064,87 @@ function normalizeCustomRoleDoc(doc) {
     };
 }
 
-async function getUserCustomRoleRecord(client, guildId, userId) {
+function getUserRolesCacheKey(guildId, userId) {
+    return `customRoles_${guildId}_${userId}`;
+}
+
+async function getUserCustomRoleRecords(client, guildId, userId) {
     const gId = String(guildId);
     const uId = String(userId);
-    const cacheKey = `customRole_${gId}_${uId}`;
+    const cacheKey = getUserRolesCacheKey(gId, uId);
     const cached = client.data.get(cacheKey);
-    if (cached) return cached;
+    if (Array.isArray(cached)) return cached;
 
     if (isMongoReady()) {
         const RoleModel = getCustomRoleModel(client);
-        const doc = await RoleModel.findOne({ guildId: gId, userId: uId })
-            .lean()
-            .catch((err) => {
-                Logger.error(`[CustomRole] Gagal membaca data Custom Role (${gId}/${uId}):`, err);
-                return null;
-            });
+        await ensureCustomRoleIndexes(RoleModel);
 
-        if (doc) {
-            const normalized = normalizeCustomRoleDoc(doc);
-            client.data.set(cacheKey, normalized);
-            return normalized;
+        if (typeof RoleModel.find === "function") {
+            try {
+                const query = RoleModel.find({ guildId: gId, userId: uId });
+                const sorted = typeof query.sort === "function" ? query.sort({ createdAt: 1 }) : query;
+                const docs = typeof sorted.lean === "function" ? await sorted.lean() : await sorted;
+                const list = Array.isArray(docs) ? docs.map(normalizeCustomRoleDoc).filter(Boolean) : [];
+                client.data.set(cacheKey, list);
+                return list;
+            } catch (err) {
+                Logger.error(`[CustomRole] Gagal membaca daftar Custom Role (${gId}/${uId}):`, err);
+                return [];
+            }
+        }
+
+        if (typeof RoleModel.findOne === "function") {
+            const single = await RoleModel.findOne({ guildId: gId, userId: uId })
+                .lean()
+                .catch(() => null);
+            const list = single ? [normalizeCustomRoleDoc(single)] : [];
+            client.data.set(cacheKey, list);
+            return list;
         }
     }
 
-    return null;
+    return [];
+}
+
+async function getGuildAllCustomRoleRecords(client, guildId) {
+    const gId = String(guildId);
+    if (!isMongoReady()) return [];
+
+    const RoleModel = getCustomRoleModel(client);
+    await ensureCustomRoleIndexes(RoleModel);
+
+    if (typeof RoleModel.find !== "function") return [];
+
+    try {
+        const query = RoleModel.find({ guildId: gId });
+        const sorted = typeof query.sort === "function" ? query.sort({ createdAt: 1 }) : query;
+        const docs = typeof sorted.lean === "function" ? await sorted.lean() : await sorted;
+        return Array.isArray(docs) ? docs.map(normalizeCustomRoleDoc).filter(Boolean) : [];
+    } catch (err) {
+        Logger.error(`[CustomRole] Gagal membaca seluruh Custom Role server (${gId}):`, err);
+        return [];
+    }
+}
+
+async function getGuildCustomRoleByRoleId(client, guildId, roleId) {
+    const gId = String(guildId);
+    const rId = String(roleId);
+    if (!isMongoReady()) return null;
+
+    const RoleModel = getCustomRoleModel(client);
+    try {
+        const doc = await RoleModel.findOne({ guildId: gId, roleId: rId }).lean();
+        return doc ? normalizeCustomRoleDoc(doc) : null;
+    } catch {
+        return null;
+    }
 }
 
 async function saveUserCustomRoleRecord(client, record) {
     const gId = String(record.guildId);
     const uId = String(record.userId);
-    const cacheKey = `customRole_${gId}_${uId}`;
+    const rId = String(record.roleId);
+    const cacheKey = getUserRolesCacheKey(gId, uId);
 
     if (!isMongoReady()) {
         const err = new Error("Database MongoDB sedang tidak terhubung. Pastikan variabel MONGO_URI aktif dan koneksi stabil.");
@@ -845,14 +1154,16 @@ async function saveUserCustomRoleRecord(client, record) {
 
     const now = new Date();
     const RoleModel = getCustomRoleModel(client);
+    await ensureCustomRoleIndexes(RoleModel);
+
     const saved = await withMongoTimeout(
         RoleModel.findOneAndUpdate(
-            { guildId: gId, userId: uId },
+            { guildId: gId, roleId: rId },
             {
                 $set: {
                     guildId: gId,
                     userId: uId,
-                    roleId: String(record.roleId),
+                    roleId: rId,
                     roleName: String(record.roleName),
                     color: String(record.color || "#00E5FF").toUpperCase(),
                     gradient: {
@@ -883,14 +1194,28 @@ async function saveUserCustomRoleRecord(client, record) {
     );
 
     const normalized = normalizeCustomRoleDoc(saved);
-    client.data.set(cacheKey, normalized);
+    const existingList = client.data.get(cacheKey);
+    if (Array.isArray(existingList)) {
+        const idx = existingList.findIndex((item) => String(item.roleId) === rId);
+        if (idx >= 0) {
+            const nextList = [...existingList];
+            nextList[idx] = normalized;
+            client.data.set(cacheKey, nextList);
+        } else {
+            client.data.set(cacheKey, [...existingList, normalized]);
+        }
+    } else {
+        client.data.delete(cacheKey);
+    }
+
     return normalized;
 }
 
-async function deleteUserCustomRoleRecord(client, guildId, userId) {
+async function deleteCustomRoleRecord(client, guildId, userId, roleId) {
     const gId = String(guildId);
     const uId = String(userId);
-    const cacheKey = `customRole_${gId}_${uId}`;
+    const rId = String(roleId);
+    const cacheKey = getUserRolesCacheKey(gId, uId);
 
     if (!isMongoReady()) {
         const err = new Error("Database MongoDB sedang tidak terhubung. Pastikan variabel MONGO_URI aktif dan koneksi stabil.");
@@ -899,8 +1224,54 @@ async function deleteUserCustomRoleRecord(client, guildId, userId) {
     }
 
     const RoleModel = getCustomRoleModel(client);
-    await withMongoTimeout(RoleModel.deleteOne({ guildId: gId, userId: uId }), 8000);
-    client.data.delete(cacheKey);
+    await withMongoTimeout(RoleModel.deleteOne({ guildId: gId, userId: uId, roleId: rId }), 8000);
+
+    const existingList = client.data.get(cacheKey);
+    if (Array.isArray(existingList)) {
+        client.data.set(
+            cacheKey,
+            existingList.filter((item) => String(item.roleId) !== rId),
+        );
+    } else {
+        client.data.delete(cacheKey);
+    }
+}
+
+async function resolveUserRoleContext(client, guild, userId) {
+    const uId = String(userId);
+    const draft = getOrInitDraft(client, guild.id, uId);
+    const records = await getUserCustomRoleRecords(client, guild.id, uId);
+
+    const pairs = [];
+    for (const rec of records) {
+        // Strict ownership invariant
+        if (String(rec.userId) !== uId) continue;
+        const liveRole = rec.roleId ? await resolveGuildRole(guild, rec.roleId) : null;
+        pairs.push({ record: rec, liveRole });
+    }
+
+    const activePairs = pairs.filter((p) => Boolean(p.liveRole));
+    const orphanPairs = pairs.filter((p) => !p.liveRole);
+
+    let chosen = null;
+    if (draft.selectedRoleId) {
+        chosen = pairs.find((p) => String(p.record.roleId) === String(draft.selectedRoleId)) || null;
+    }
+    if (!chosen) {
+        chosen = activePairs[0] || pairs[0] || null;
+    }
+    if (chosen) {
+        draft.selectedRoleId = String(chosen.record.roleId);
+    }
+
+    return {
+        records: pairs.map((p) => p.record),
+        pairs,
+        activePairs,
+        orphanPairs,
+        selectedRecord: chosen?.record || null,
+        selectedLiveRole: chosen?.liveRole || null,
+    };
 }
 
 // ============================================================================
@@ -910,17 +1281,14 @@ async function deleteUserCustomRoleRecord(client, guildId, userId) {
 function detectImageSignature(buffer) {
     if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
 
-    // PNG: 89 50 4E 47 0D 0A 1A 0A
     if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
         return "image/png";
     }
 
-    // JPEG: FF D8 FF
     if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
         return "image/jpeg";
     }
 
-    // WEBP: "RIFF" .... "WEBP"
     if (buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") {
         return "image/webp";
     }
@@ -1033,7 +1401,7 @@ async function safeShowModal(interaction, modal) {
 }
 
 // ============================================================================
-// UI Builders (Main Dashboard, Color Studio, Gradient Studio, Image Studio, View, Delete, Admin Policy)
+// UI Builders — Member Dashboard (/customrole) & Studios
 // ============================================================================
 
 function formatDirectionLabel(dir) {
@@ -1041,13 +1409,13 @@ function formatDirectionLabel(dir) {
     return found ? `${found.emoji} ${found.label}` : "➡️ Horizontal (Kiri → Kanan)";
 }
 
-function buildMainMenuSelectRow(userId, isStrictAdmin) {
+function buildMainMenuSelectRow(userId, canManageConfig) {
     const options = [
         {
             label: "Buat Role",
             value: "create",
             emoji: "➕",
-            description: "Buat Custom Role baru dengan nama & warna pilihanmu",
+            description: "Buat Custom Role baru sesuai batas kepemilikan server",
         },
         {
             label: "Ubah Nama Role",
@@ -1087,12 +1455,12 @@ function buildMainMenuSelectRow(userId, isStrictAdmin) {
         },
     ];
 
-    if (isStrictAdmin) {
+    if (canManageConfig) {
         options.push({
-            label: "Pengaturan Izin Akses (Admin)",
-            value: "admin_policy",
+            label: "Pengaturan Akses Server (/customrole-config)",
+            value: "open_config",
             emoji: "⚙️",
-            description: "Atur siapa yang boleh membuat Custom Role di server ini",
+            description: "Atur akses Booster, Role Khusus & batas role per member",
         });
     }
 
@@ -1109,9 +1477,15 @@ async function buildCustomRoleDashboard(client, guild, user, options = {}) {
     const botAvatar = getBotAvatarUrl(client);
     const guildIcon = guild.iconURL?.({ size: 128 }) || botAvatar;
     const capabilities = detectGuildCustomRoleCapabilities(guild);
-    const record = options.record !== undefined ? options.record : await getUserCustomRoleRecord(client, guild.id, userId);
-    const liveRole = record?.roleId ? await resolveGuildRole(guild, record.roleId) : null;
-    const isAdmin = Boolean(options.isStrictAdmin);
+    const config = options.config || (await getGuildCustomRoleConfig(client, guild.id));
+    const roleCtx = options.roleCtx || (await resolveUserRoleContext(client, guild, userId));
+    const canManage = Boolean(options.canManageConfig);
+
+    const record = roleCtx.selectedRecord;
+    const liveRole = roleCtx.selectedLiveRole;
+    const activeCount = roleCtx.activePairs.length;
+    const maxRoles = config.maxRolesPerMember || 1;
+    const canCreateAnother = activeCount < maxRoles;
 
     const previewHexes =
         record?.gradient?.enabled && record.gradient.colors?.length >= 2 ? record.gradient.colors : [record?.color || "#00E5FF"];
@@ -1156,6 +1530,13 @@ async function buildCustomRoleDashboard(client, guild, user, options = {}) {
         `Kelola identitas role pribadimu di server **${escapeMarkdown(guild.name)}** dengan kustomisasi nama, warna, gradasi, dan ikon langsung dari perangkatmu.`,
     ];
 
+    if (!config.customRoleEnabled && canManage) {
+        descLines.push(
+            "",
+            "⚠️ *Catatan Admin: Fitur Custom Role untuk member sedang **DINONAKTIFKAN** di server ini. Aktifkan melalui `/customrole-config`.*",
+        );
+    }
+
     if (options.noticeMessage) {
         descLines.push("", options.noticeMessage);
     }
@@ -1182,7 +1563,8 @@ async function buildCustomRoleDashboard(client, guild, user, options = {}) {
                 name: "🪪 Status Custom Role Anda",
                 value: [
                     `• **Pemilik:** <@${userId}>`,
-                    `• **Role:** ${roleStatusText}`,
+                    `• **Kuota Kepemilikan:** \`${activeCount}/${maxRoles} Custom Role\``,
+                    `• **Role Dipilih:** ${roleStatusText}`,
                     `• **Nama Role:** ${record ? `**${escapeMarkdown(liveRole?.name || record.roleName)}**` : "`-`"}`,
                     `• **Warna Utama:** \`${record?.color || "#00E5FF"}\``,
                     `• **Gradasi:** ${gradSummary}`,
@@ -1206,10 +1588,37 @@ async function buildCustomRoleDashboard(client, guild, user, options = {}) {
         embed.setThumbnail(record.imageUrl);
     }
 
-    const selectRow = buildMainMenuSelectRow(userId, isAdmin);
+    const components = [];
+
+    if (roleCtx.pairs.length > 1) {
+        const switchOptions = roleCtx.pairs.slice(0, 25).map((pair, index) => {
+            const labelName = pair.liveRole?.name || pair.record.roleName || `Role #${index + 1}`;
+            return {
+                label: `${index + 1}. ${labelName}`.slice(0, 100),
+                value: String(pair.record.roleId),
+                emoji: pair.liveRole ? "🎭" : "⚠️",
+                description: `${pair.record.color} • ID: ${pair.record.roleId}`.slice(0, 100),
+                default: String(pair.record.roleId) === String(record?.roleId),
+            };
+        });
+
+        components.push(
+            new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId(`${CR_PREFIX}:select_own_role:${userId}`)
+                    .setPlaceholder("🎭 Pilih Custom Role Milikmu yang Ingin Dikelola ▼")
+                    .addOptions(switchOptions),
+            ),
+        );
+    }
+
+    components.push(buildMainMenuSelectRow(userId, canManage));
+
     const quickButtonsRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId(`${CR_PREFIX}:quick_create:${userId}`)
+            .setCustomId(
+                `${CR_PREFIX}:${canCreateAnother && (!record || !liveRole) ? "quick_create" : record && liveRole ? "quick_rename" : "quick_create"}:${userId}`,
+            )
             .setLabel(record && liveRole ? "Ubah Nama" : "Buat Role")
             .setEmoji(record && liveRole ? "✏️" : "➕")
             .setStyle(ButtonStyle.Primary),
@@ -1233,9 +1642,21 @@ async function buildCustomRoleDashboard(client, guild, user, options = {}) {
             .setDisabled(!record || !liveRole),
     );
 
+    if (record && liveRole && canCreateAnother) {
+        quickButtonsRow.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`${CR_PREFIX}:quick_create:${userId}`)
+                .setLabel("Role Baru")
+                .setEmoji("➕")
+                .setStyle(ButtonStyle.Success),
+        );
+    }
+
+    components.push(quickButtonsRow);
+
     return {
         embeds: [embed],
-        components: [selectRow, quickButtonsRow],
+        components,
         files: [previewAttachment],
     };
 }
@@ -1658,7 +2079,7 @@ function buildDeleteConfirmPanel(client, userId, record, liveRole) {
 
     const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId(`${CR_PREFIX}:delete_confirm:${userId}`)
+            .setCustomId(`${CR_PREFIX}:delete_confirm:${userId}:${record.roleId}`)
             .setLabel("YA, HAPUS CUSTOM ROLE")
             .setEmoji("🗑️")
             .setStyle(ButtonStyle.Danger),
@@ -1676,90 +2097,352 @@ function buildDeleteConfirmPanel(client, userId, record, liveRole) {
     };
 }
 
-async function buildAdminPolicyPanel(client, guild, adminUserId, noticeMessage = null) {
+// ============================================================================
+// UI Builders — Admin Configuration Dashboard (/customrole-config)
+// ============================================================================
+
+async function buildCustomRoleConfigDashboard(client, guild, adminUserId, options = {}) {
+    const adminId = String(adminUserId);
     const botAvatar = getBotAvatarUrl(client);
-    const policy = await getGuildCustomRolePolicy(client, guild.id);
+    const guildIcon = guild.iconURL?.({ size: 128 }) || botAvatar;
+    const config = options.config || (await getGuildCustomRoleConfig(client, guild.id));
 
-    const modeLabels = {
-        admin_only: "🔒 Khusus Administrator / Manage Roles",
-        boosters: "💎 Server Booster + Administrator",
-        role_required: `🎭 Pemilik Role Tertentu (${policy.requiredRoleId ? `<@&${policy.requiredRoleId}>` : "Belum dipilih"}) + Admin`,
-        all_members: "🌐 Semua Member Server (Maks. 1 Role per Member)",
-    };
+    const allowedRoleMentions = [];
+    for (const rId of config.allowedRoles) {
+        const live = guild.roles?.cache?.get?.(String(rId));
+        allowedRoleMentions.push(live ? `<@&${rId}>` : `\`Role Terhapus (${rId})\``);
+    }
 
-    const desc = [
-        `**Pengaturan Izin Custom Role Server — ${escapeMarkdown(guild.name)}**`,
-        "Tentukan siapa saja anggota di server ini yang diizinkan membuat dan mengelola **Custom Role** pribadi mereka melalui `/customrole`.",
-        "*(Seluruh Custom Role yang dibuat selalu memiliki permission kosong `0` sehingga tetap 100% aman dari eskalasi hak akses.)*",
+    const allowedPreviewText =
+        allowedRoleMentions.length > 0
+            ? allowedRoleMentions.slice(0, 12).join(", ") +
+              (allowedRoleMentions.length > 12 ? ` *(+${allowedRoleMentions.length - 12} role lainnya)*` : "")
+            : "`Belum ada role khusus yang dipilih`";
+
+    const updatedUnix = config.updatedAt ? Math.floor(new Date(config.updatedAt).getTime() / 1000) : null;
+
+    const descLines = [
+        `**Pengaturan Sistem Akses Custom Role — ${escapeMarkdown(guild.name)}**`,
+        "Atur siapa saja member yang berhak membuat dan mengelola **Custom Role** di server ini. Semua member biasa tanpa status **Server Booster** atau **Role Khusus** akan ditolak otomatis.",
     ];
-    if (noticeMessage) desc.push("", noticeMessage);
+
+    if (!config.boosterAccessEnabled && (!config.roleAccessEnabled || config.allowedRoles.length === 0)) {
+        descLines.push(
+            "",
+            "⚠️ *Saat ini akses Booster nonaktif dan belum ada Role Khusus aktif — hanya Administrator / Manage Guild yang memiliki akses.*",
+        );
+    }
+
+    if (options.noticeMessage) {
+        descLines.push("", options.noticeMessage);
+    }
+
+    let embedColor = CR_COLORS.PRIMARY;
+    if (options.noticeType === "success") embedColor = CR_COLORS.SUCCESS;
+    else if (options.noticeType === "warning") embedColor = CR_COLORS.WARNING;
+    else if (options.noticeType === "error") embedColor = CR_COLORS.ERROR;
 
     const embed = new EmbedBuilder()
-        .setColor(CR_COLORS.PRIMARY)
-        .setTitle("⚙️ PENGATURAN IZIN CUSTOM ROLE (ADMIN)")
-        .setDescription(desc.join("\n"))
-        .addFields({
-            name: "🛡️ Kebijakan Akses Saat Ini",
-            value: [
-                `• **Mode Akses:** ${modeLabels[policy.accessMode] || modeLabels.admin_only}`,
-                `• **Role Syarat (Opsional):** ${policy.requiredRoleId ? `<@&${policy.requiredRoleId}>` : "`Tidak digunakan`"}`,
-            ].join("\n"),
-            inline: false,
+        .setColor(embedColor)
+        .setAuthor({
+            name: `${guild.name} • Konfigurasi Custom Role`,
+            iconURL: guildIcon,
         })
+        .setTitle("⚙️ PENGATURAN CUSTOM ROLE SERVER")
+        .setDescription(descLines.join("\n"))
+        .addFields(
+            {
+                name: "🛡️ Status Persyaratan Akses",
+                value: [
+                    `• **Status Fitur Custom Role:** ${config.customRoleEnabled ? "🟢 **Aktif**" : "🔴 **Nonaktif**"}`,
+                    `• **Akses Server Booster:** ${config.boosterAccessEnabled ? "🟢 **Diizinkan**" : "🔴 **Dinonaktifkan**"}`,
+                    `• **Akses Role Khusus:** ${config.roleAccessEnabled ? "🟢 **Diizinkan**" : "🔴 **Dinonaktifkan**"}`,
+                    `• **Batas Kepemilikan:** \`Maksimal ${config.maxRolesPerMember} Custom Role per Member\``,
+                    `• **Terakhir Diperbarui:** ${updatedUnix ? `<t:${updatedUnix}:R>` : "`Default Sistem`"}`,
+                ].join("\n"),
+                inline: false,
+            },
+            {
+                name: `🎭 Daftar Role Khusus yang Diizinkan (${config.allowedRoles.length}/${MAX_ALLOWED_ROLES_PER_GUILD})`,
+                value: allowedPreviewText,
+                inline: false,
+            },
+        )
         .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
         .setTimestamp();
 
-    const modeSelectRow = new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-            .setCustomId(`${CR_PREFIX}:policy_mode:${adminUserId}`)
-            .setPlaceholder("🛡️ Pilih Mode Izin Akses Custom Role ▼")
-            .addOptions([
-                {
-                    label: "Khusus Admin / Manage Roles (Default Aman)",
-                    value: "admin_only",
-                    emoji: "🔒",
-                    default: policy.accessMode === "admin_only",
-                },
-                {
-                    label: "Server Booster + Admin",
-                    value: "boosters",
-                    emoji: "💎",
-                    default: policy.accessMode === "boosters",
-                },
-                {
-                    label: "Pemilik Role Tertentu + Admin",
-                    value: "role_required",
-                    emoji: "🎭",
-                    default: policy.accessMode === "role_required",
-                },
-                {
-                    label: "Semua Member Server (1 Role per Member)",
-                    value: "all_members",
-                    emoji: "🌐",
-                    default: policy.accessMode === "all_members",
-                },
-            ]),
+    const toggleRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:cfg_toggle_enabled:${adminId}`)
+            .setLabel(`Sistem: ${config.customRoleEnabled ? "AKTIF" : "NONAKTIF"}`)
+            .setEmoji(config.customRoleEnabled ? "🟢" : "🔴")
+            .setStyle(config.customRoleEnabled ? ButtonStyle.Success : ButtonStyle.Danger),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:cfg_toggle_booster:${adminId}`)
+            .setLabel(`Booster: ${config.boosterAccessEnabled ? "AKTIF" : "NONAKTIF"}`)
+            .setEmoji("💎")
+            .setStyle(config.boosterAccessEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:cfg_toggle_role:${adminId}`)
+            .setLabel(`Role Khusus: ${config.roleAccessEnabled ? "AKTIF" : "NONAKTIF"}`)
+            .setEmoji("🎭")
+            .setStyle(config.roleAccessEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:cfg_max_modal:${adminId}`)
+            .setLabel(`Batas Role: ${config.maxRolesPerMember}`)
+            .setEmoji("🔢")
+            .setStyle(ButtonStyle.Primary),
     );
 
-    const roleSelectRow = new ActionRowBuilder().addComponents(
+    const maxSelectableAdd = Math.min(15, Math.max(1, MAX_ALLOWED_ROLES_PER_GUILD));
+    const addRoleRow = new ActionRowBuilder().addComponents(
         new RoleSelectMenuBuilder()
-            .setCustomId(`${CR_PREFIX}:policy_role:${adminUserId}`)
-            .setPlaceholder("🎭 Pilih Role Syarat (Jika memilih Mode Role Tertentu) ▼")
+            .setCustomId(`${CR_PREFIX}:cfg_add_roles:${adminId}`)
+            .setPlaceholder("➕ Pilih / Tambahkan Role yang Diizinkan (Bisa Beberapa Role) ▼")
             .setMinValues(1)
-            .setMaxValues(1),
+            .setMaxValues(maxSelectableAdd),
     );
+
+    const components = [toggleRow, addRoleRow];
+
+    if (config.allowedRoles.length > 0) {
+        const removeOptions = config.allowedRoles.slice(0, 25).map((rId) => {
+            const roleObj = guild.roles?.cache?.get?.(String(rId));
+            return {
+                label: (roleObj ? roleObj.name : `Role Terhapus (${rId})`).slice(0, 100),
+                value: String(rId),
+                emoji: "🗑️",
+                description: `ID Role: ${rId}`,
+            };
+        });
+
+        components.push(
+            new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId(`${CR_PREFIX}:cfg_remove_roles:${adminId}`)
+                    .setPlaceholder("➖ Hapus Role dari Daftar Izin (Pilih 1 atau Beberapa) ▼")
+                    .setMinValues(1)
+                    .setMaxValues(removeOptions.length)
+                    .addOptions(removeOptions),
+            ),
+        );
+    }
+
+    const utilRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:cfg_view_roles:${adminId}`)
+            .setLabel(`Lihat Daftar Role (${config.allowedRoles.length})`)
+            .setEmoji("📋")
+            .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:cfg_member_roles:${adminId}`)
+            .setLabel("Kelola Role Member")
+            .setEmoji("🛡️")
+            .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:cfg_clear_roles:${adminId}`)
+            .setLabel("Hapus Semua Role Izin")
+            .setEmoji("🧹")
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(config.allowedRoles.length === 0),
+    );
+
+    components.push(utilRow);
+
+    return {
+        embeds: [embed],
+        components,
+        files: [],
+    };
+}
+
+async function buildAllowedRolesListView(client, guild, adminUserId) {
+    const adminId = String(adminUserId);
+    const botAvatar = getBotAvatarUrl(client);
+    const config = await getGuildCustomRoleConfig(client, guild.id);
+
+    const lines = [];
+    if (config.allowedRoles.length === 0) {
+        lines.push("Belum ada **Role Khusus** yang ditambahkan ke daftar izin di server ini.");
+    } else {
+        for (let i = 0; i < config.allowedRoles.length; i++) {
+            const rId = config.allowedRoles[i];
+            const roleObj = await resolveGuildRole(guild, rId);
+            if (roleObj) {
+                lines.push(`${i + 1}. <@&${roleObj.id}> — **${escapeMarkdown(roleObj.name)}** (\`ID: ${roleObj.id}\`)`);
+            } else {
+                lines.push(`${i + 1}. ⚠️ \`Role Tidak Ditemukan di Server\` (\`ID: ${rId}\`)`);
+            }
+        }
+    }
+
+    const embed = new EmbedBuilder()
+        .setColor(CR_COLORS.ELECTRIC)
+        .setAuthor({
+            name: `${guild.name} • Daftar Role Izin Custom Role`,
+            iconURL: guild.iconURL?.({ size: 128 }) || botAvatar,
+        })
+        .setTitle("📋 DAFTAR ROLE YANG MEMILIKI AKSES CUSTOM ROLE")
+        .setDescription(
+            [
+                `• **Status Akses Role Khusus:** ${config.roleAccessEnabled ? "🟢 **Aktif**" : "🔴 **Dinonaktifkan**"}`,
+                `• **Status Akses Server Booster:** ${config.boosterAccessEnabled ? "🟢 **Aktif**" : "🔴 **Dinonaktifkan**"}`,
+                "",
+                "**Daftar Role Khusus Terdaftar:**",
+                ...lines,
+            ].join("\n"),
+        )
+        .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
+        .setTimestamp();
 
     const backRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-            .setCustomId(`${CR_PREFIX}:cancel:${adminUserId}`)
-            .setLabel("Kembali ke Dashboard")
-            .setEmoji("🏠")
+            .setCustomId(`${CR_PREFIX}:cfg_back:${adminId}`)
+            .setLabel("Kembali ke Pengaturan")
+            .setEmoji("↩️")
             .setStyle(ButtonStyle.Primary),
     );
 
     return {
         embeds: [embed],
-        components: [modeSelectRow, roleSelectRow, backRow],
+        components: [backRow],
+        files: [],
+    };
+}
+
+async function buildAdminMemberRolesPanel(client, guild, adminUserId, noticeMessage = null, noticeType = null) {
+    const adminId = String(adminUserId);
+    const botAvatar = getBotAvatarUrl(client);
+    const config = await getGuildCustomRoleConfig(client, guild.id);
+    const draft = getOrInitDraft(client, guild.id, adminId);
+    const allRecords = await getGuildAllCustomRoleRecords(client, guild.id);
+
+    const pageSize = 10;
+    const totalPages = Math.max(1, Math.ceil(allRecords.length / pageSize));
+    const currentPage = Math.max(0, Math.min(totalPages - 1, Number(draft.adminPage) || 0));
+    draft.adminPage = currentPage;
+
+    const slice = allRecords.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+
+    let selectedRec = null;
+    if (draft.adminSelectedRoleId) {
+        selectedRec = allRecords.find((r) => String(r.roleId) === String(draft.adminSelectedRoleId)) || null;
+    }
+    if (!selectedRec && slice.length > 0) {
+        selectedRec = slice[0];
+        draft.adminSelectedRoleId = String(selectedRec.roleId);
+    }
+
+    const itemLines = [];
+    const selectOptions = [];
+
+    for (let i = 0; i < slice.length; i++) {
+        const rec = slice[i];
+        const liveRole = await resolveGuildRole(guild, rec.roleId);
+        const ownerMember = await resolveGuildMember(guild, rec.userId);
+        const ownerIsAdmin = ownerMember ? canManageCustomRoleConfig(ownerMember, guild) : false;
+        const eligibility = ownerMember
+            ? evaluateMemberEligibilityWithConfig(guild, config, ownerMember, null, ownerIsAdmin)
+            : { allowed: false };
+
+        const accessBadge = !ownerMember
+            ? "🚪 Keluar Server"
+            : eligibility.allowed
+              ? "🟢 Akses Aktif"
+              : "⚠️ Kehilangan Akses (Role Dipertahankan)";
+
+        itemLines.push(
+            `**${currentPage * pageSize + i + 1}.** ${liveRole ? `<@&${liveRole.id}>` : `\`${escapeInline(rec.roleName)} (Terhapus)\``} — Pemilik: <@${rec.userId}> • ${accessBadge}`,
+        );
+
+        selectOptions.push({
+            label: `${liveRole?.name || rec.roleName} (${rec.color})`.slice(0, 100),
+            value: String(rec.roleId),
+            emoji: eligibility.allowed ? "🟢" : "⚠️",
+            description: `Pemilik ID: ${rec.userId} • ${accessBadge}`.slice(0, 100),
+            default: selectedRec && String(selectedRec.roleId) === String(rec.roleId),
+        });
+    }
+
+    const desc = [
+        `**Panel Pengelolaan Penuh Admin — ${escapeMarkdown(guild.name)}**`,
+        "Role milik member yang kehilangan status Booster atau Role Khusus **tetap dipertahankan secara aman** dan ditandai `⚠️ Kehilangan Akses` agar Admin dapat menentukan tindakan selanjutnya.",
+    ];
+    if (noticeMessage) desc.push("", noticeMessage);
+    desc.push("", allRecords.length === 0 ? "*Belum ada Custom Role yang dibuat pada server ini.*" : itemLines.join("\n"));
+
+    const embed = new EmbedBuilder()
+        .setColor(noticeType === "error" ? CR_COLORS.ERROR : noticeType === "success" ? CR_COLORS.SUCCESS : CR_COLORS.PRIMARY)
+        .setTitle(`🛡️ KELOLA CUSTOM ROLE MEMBER (${allRecords.length} ROLE)`)
+        .setDescription(desc.join("\n"))
+        .setFooter({
+            text: `${CR_FOOTER} • Halaman ${currentPage + 1}/${totalPages}`,
+            iconURL: botAvatar,
+        })
+        .setTimestamp();
+
+    const components = [];
+
+    if (selectOptions.length > 0) {
+        components.push(
+            new ActionRowBuilder().addComponents(
+                new StringSelectMenuBuilder()
+                    .setCustomId(`${CR_PREFIX}:cfg_admin_pick:${adminId}`)
+                    .setPlaceholder("🎯 Pilih Custom Role Member untuk Dikelola ▼")
+                    .addOptions(selectOptions),
+            ),
+        );
+    }
+
+    if (selectedRec) {
+        components.push(
+            new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`${CR_PREFIX}:cfg_admin_rename:${adminId}:${selectedRec.roleId}`)
+                    .setLabel("Ubah Nama Role")
+                    .setEmoji("✏️")
+                    .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                    .setCustomId(`${CR_PREFIX}:cfg_admin_color:${adminId}:${selectedRec.roleId}`)
+                    .setLabel("Ubah Warna HEX")
+                    .setEmoji("🎨")
+                    .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                    .setCustomId(`${CR_PREFIX}:cfg_admin_delete:${adminId}:${selectedRec.roleId}`)
+                    .setLabel("Hapus Role Ini")
+                    .setEmoji("🗑️")
+                    .setStyle(ButtonStyle.Danger),
+            ),
+        );
+    }
+
+    const navRow = new ActionRowBuilder();
+    if (totalPages > 1) {
+        navRow.addComponents(
+            new ButtonBuilder()
+                .setCustomId(`${CR_PREFIX}:cfg_admin_prev:${adminId}`)
+                .setLabel("◀ Sebelumnya")
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage <= 0),
+            new ButtonBuilder()
+                .setCustomId(`${CR_PREFIX}:cfg_admin_next:${adminId}`)
+                .setLabel("Berikutnya ▶")
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(currentPage >= totalPages - 1),
+        );
+    }
+    navRow.addComponents(
+        new ButtonBuilder()
+            .setCustomId(`${CR_PREFIX}:cfg_back:${adminId}`)
+            .setLabel("Kembali ke Pengaturan")
+            .setEmoji("↩️")
+            .setStyle(ButtonStyle.Primary),
+    );
+    components.push(navRow);
+
+    return {
+        embeds: [embed],
+        components,
         files: [],
     };
 }
@@ -1797,7 +2480,7 @@ function createRoleCreationModal(userId) {
         );
 }
 
-function createRenameModal(userId, currentName = "") {
+function createRenameModal(userId, roleId, currentName = "", isAdminOverride = false) {
     const input = new TextInputBuilder()
         .setCustomId("role_name")
         .setLabel("Nama Baru Custom Role (1-100 karakter)")
@@ -1811,15 +2494,17 @@ function createRenameModal(userId, currentName = "") {
         input.setValue(String(currentName).slice(0, 100));
     }
 
+    const modalPrefix = isAdminOverride ? "modal_cfg_admin_rename" : "modal_rename";
     return new ModalBuilder()
-        .setCustomId(`${CR_PREFIX}:modal_rename:${userId}`)
+        .setCustomId(`${CR_PREFIX}:${modalPrefix}:${userId}:${roleId}`)
         .setTitle("Ubah Nama Custom Role")
         .addComponents(new ActionRowBuilder().addComponents(input));
 }
 
-function createHexInputModal(userId, currentHex = "#00E5FF") {
+function createHexInputModal(userId, roleId, currentHex = "#00E5FF", isAdminOverride = false) {
+    const modalPrefix = isAdminOverride ? "modal_cfg_admin_color" : "modal_hex";
     return new ModalBuilder()
-        .setCustomId(`${CR_PREFIX}:modal_hex:${userId}`)
+        .setCustomId(`${CR_PREFIX}:${modalPrefix}:${userId}:${roleId}`)
         .setTitle("Input Kode Warna HEX")
         .addComponents(
             new ActionRowBuilder().addComponents(
@@ -1830,6 +2515,25 @@ function createHexInputModal(userId, currentHex = "#00E5FF") {
                     .setMinLength(4)
                     .setMaxLength(7)
                     .setValue(currentHex)
+                    .setRequired(true)
+                    .setStyle(TextInputStyle.Short),
+            ),
+        );
+}
+
+function createMaxRolesModal(adminUserId, currentMax = 1) {
+    return new ModalBuilder()
+        .setCustomId(`${CR_PREFIX}:modal_cfg_max:${adminUserId}`)
+        .setTitle("Batas Jumlah Custom Role per Member")
+        .addComponents(
+            new ActionRowBuilder().addComponents(
+                new TextInputBuilder()
+                    .setCustomId("max_roles")
+                    .setLabel("Batas Maksimal Role per Member (1 - 25)")
+                    .setPlaceholder("Default: 1")
+                    .setMinLength(1)
+                    .setMaxLength(2)
+                    .setValue(String(currentMax || 1))
                     .setRequired(true)
                     .setStyle(TextInputStyle.Short),
             ),
@@ -1901,18 +2605,418 @@ function createImageUploadModal(userId, hasRoleIcons) {
 }
 
 // ============================================================================
+// Admin Configuration Interaction Handler (`cfg_*` and `modal_cfg_*`)
+// ============================================================================
+
+async function handleAdminConfigInteraction(client, guild, interaction, action, extraRoleId) {
+    const adminId = String(interaction.user.id);
+
+    if (!canManageCustomRoleConfig(interaction, guild)) {
+        const deniedEmbed = buildAdminConfigDeniedEmbed(client);
+        await safeReply(interaction, { embeds: [deniedEmbed], flags: MessageFlags.Ephemeral });
+        return true;
+    }
+
+    // Actions that open Modals BEFORE deferring
+    if (action === "cfg_max_modal") {
+        const config = await getGuildCustomRoleConfig(client, guild.id);
+        await safeShowModal(interaction, createMaxRolesModal(adminId, config.maxRolesPerMember));
+        return true;
+    }
+
+    if (action === "cfg_admin_rename" && extraRoleId) {
+        const rec = await getGuildCustomRoleByRoleId(client, guild.id, extraRoleId);
+        const liveRole = extraRoleId ? await resolveGuildRole(guild, extraRoleId) : null;
+        await safeShowModal(interaction, createRenameModal(adminId, extraRoleId, liveRole?.name || rec?.roleName || "", true));
+        return true;
+    }
+
+    if (action === "cfg_admin_color" && extraRoleId) {
+        const rec = await getGuildCustomRoleByRoleId(client, guild.id, extraRoleId);
+        await safeShowModal(interaction, createHexInputModal(adminId, extraRoleId, rec?.color || "#00E5FF", true));
+        return true;
+    }
+
+    // Modal submits for Admin Config
+    if (typeof interaction.isModalSubmit === "function" && interaction.isModalSubmit()) {
+        const isFromMsg = typeof interaction.isFromMessage === "function" && interaction.isFromMessage();
+        const acked = isFromMsg ? await safeDeferUpdate(interaction) : await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!acked) return true;
+
+        return withCustomRoleLock(guild.id, `cfg_${adminId}`, async () => {
+            if (action === "modal_cfg_max") {
+                const rawVal = String(interaction.fields.getTextInputValue("max_roles") || "").trim();
+                const parsed = Number.parseInt(rawVal, 10);
+
+                if (!/^\d+$/.test(rawVal) || !Number.isFinite(parsed) || parsed < 1 || parsed > MAX_ROLES_PER_MEMBER_CAP) {
+                    const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                        noticeType: "error",
+                        noticeMessage: `❌ **Input Tidak Valid:** Masukkan angka bulat antara **1** hingga **${MAX_ROLES_PER_MEMBER_CAP}** untuk batas maksimal Custom Role per member.`,
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                try {
+                    const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                        maxRolesPerMember: parsed,
+                        updatedBy: adminId,
+                    });
+                    const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                        config: saved,
+                        noticeType: "success",
+                        noticeMessage: `✅ **Batas Kepemilikan Diperbarui!** Setiap member yang memenuhi syarat kini dapat memiliki maksimal **${saved.maxRolesPerMember} Custom Role** di server ini.`,
+                    });
+                    await safeEditReply(interaction, panel);
+                } catch (dbErr) {
+                    const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                        noticeType: "error",
+                        noticeMessage: `❌ **Gagal Menyimpan ke MongoDB:** \`${escapeInline(dbErr?.message)}\``,
+                    });
+                    await safeEditReply(interaction, panel);
+                }
+                return true;
+            }
+
+            if (action === "modal_cfg_admin_rename" && extraRoleId) {
+                const rec = await getGuildCustomRoleByRoleId(client, guild.id, extraRoleId);
+                const liveRole = await resolveGuildRole(guild, extraRoleId);
+                if (!rec || !liveRole) {
+                    const panel = await buildAdminMemberRolesPanel(
+                        client,
+                        guild,
+                        adminId,
+                        "⚠️ Role tidak lagi ditemukan pada server atau database.",
+                        "error",
+                    );
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const botCheck = await validateBotRoleManagement(guild, liveRole);
+                if (!botCheck.valid) {
+                    const panel = await buildAdminMemberRolesPanel(client, guild, adminId, `❌ ${botCheck.message}`, "error");
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const rawName = interaction.fields.getTextInputValue("role_name");
+                const nameCheck = validateCustomRoleName(guild, rawName, liveRole.id);
+                if (!nameCheck.valid) {
+                    const panel = await buildAdminMemberRolesPanel(client, guild, adminId, `❌ ${nameCheck.message}`, "error");
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                await liveRole.setName(nameCheck.name, `Lagukan Admin Override oleh ${interaction.user.username}`);
+                await saveUserCustomRoleRecord(client, {
+                    ...rec,
+                    roleName: nameCheck.name,
+                });
+
+                const panel = await buildAdminMemberRolesPanel(
+                    client,
+                    guild,
+                    adminId,
+                    `✅ Nama role <@&${liveRole.id}> milik <@${rec.userId}> berhasil diperbarui menjadi **${escapeMarkdown(nameCheck.name)}**.`,
+                    "success",
+                );
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "modal_cfg_admin_color" && extraRoleId) {
+                const rec = await getGuildCustomRoleByRoleId(client, guild.id, extraRoleId);
+                const liveRole = await resolveGuildRole(guild, extraRoleId);
+                if (!rec || !liveRole) {
+                    const panel = await buildAdminMemberRolesPanel(
+                        client,
+                        guild,
+                        adminId,
+                        "⚠️ Role tidak lagi ditemukan pada server atau database.",
+                        "error",
+                    );
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const botCheck = await validateBotRoleManagement(guild, liveRole);
+                if (!botCheck.valid) {
+                    const panel = await buildAdminMemberRolesPanel(client, guild, adminId, `❌ ${botCheck.message}`, "error");
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const parsed = parseAndValidateHexColor(interaction.fields.getTextInputValue("hex_value"));
+                if (!parsed.valid) {
+                    const panel = await buildAdminMemberRolesPanel(client, guild, adminId, `❌ ${parsed.message}`, "error");
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                await liveRole.setColors(
+                    { primaryColor: parsed.discordInt, secondaryColor: null, tertiaryColor: null },
+                    `Lagukan Admin Override oleh ${interaction.user.username}`,
+                );
+                await saveUserCustomRoleRecord(client, {
+                    ...rec,
+                    color: parsed.hex,
+                    gradient: { ...rec.gradient, enabled: false, appliedMode: "none" },
+                });
+
+                const panel = await buildAdminMemberRolesPanel(
+                    client,
+                    guild,
+                    adminId,
+                    `✅ Warna role <@&${liveRole.id}> milik <@${rec.userId}> berhasil diperbarui ke \`${parsed.hex}\`.`,
+                    "success",
+                );
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            return true;
+        });
+    }
+
+    const acked = await safeDeferUpdate(interaction);
+    if (!acked) return true;
+
+    return withCustomRoleLock(guild.id, `cfg_${adminId}`, async () => {
+        const currentConfig = await getGuildCustomRoleConfig(client, guild.id);
+        const draft = getOrInitDraft(client, guild.id, adminId);
+
+        try {
+            if (action === "cfg_back") {
+                const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, { config: currentConfig });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "cfg_toggle_enabled") {
+                const nextVal = !currentConfig.customRoleEnabled;
+                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                    customRoleEnabled: nextVal,
+                    updatedBy: adminId,
+                });
+                const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                    config: saved,
+                    noticeType: nextVal ? "success" : "warning",
+                    noticeMessage: nextVal
+                        ? "🟢 **Fitur Custom Role berhasil DIAKTIFKAN** di server ini!"
+                        : "🔴 **Fitur Custom Role berhasil DINONAKTIFKAN** untuk member di server ini.",
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "cfg_toggle_booster") {
+                const nextVal = !currentConfig.boosterAccessEnabled;
+                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                    boosterAccessEnabled: nextVal,
+                    updatedBy: adminId,
+                });
+                const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                    config: saved,
+                    noticeType: "success",
+                    noticeMessage: nextVal
+                        ? "💎 **Akses Server Booster DIAKTIFKAN!** Member yang mem-boost server ini dapat membuat dan mengelola Custom Role."
+                        : "🔒 **Akses Server Booster DINONAKTIFKAN.** Hanya member dengan Role Khusus yang ditentukan admin yang memiliki akses.",
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "cfg_toggle_role") {
+                const nextVal = !currentConfig.roleAccessEnabled;
+                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                    roleAccessEnabled: nextVal,
+                    updatedBy: adminId,
+                });
+                const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                    config: saved,
+                    noticeType: "success",
+                    noticeMessage: nextVal
+                        ? "🎭 **Akses Role Khusus DIAKTIFKAN!** Member yang memiliki salah satu role pada daftar izin dapat menggunakan Custom Role."
+                        : "🔒 **Akses Role Khusus DINONAKTIFKAN.**",
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "cfg_add_roles") {
+                const rawPicked = Array.isArray(interaction.values) ? interaction.values.map(String) : [];
+                let rejectedEveryone = false;
+                let rejectedBotRole = false;
+                const validPicked = [];
+
+                for (const rId of rawPicked) {
+                    if (rId === String(guild.id)) {
+                        rejectedEveryone = true;
+                        continue;
+                    }
+                    const roleObj = guild.roles?.cache?.get?.(rId);
+                    if (roleObj?.tags?.botId) {
+                        rejectedBotRole = true;
+                        continue;
+                    }
+                    validPicked.push(rId);
+                }
+
+                if (validPicked.length === 0) {
+                    const reasonParts = [];
+                    if (rejectedEveryone) {
+                        reasonParts.push(
+                            "Role `@everyone` tidak diizinkan karena fitur Custom Role tidak boleh dibuka secara bebas untuk seluruh member.",
+                        );
+                    }
+                    if (rejectedBotRole) {
+                        reasonParts.push("Role khusus milik aplikasi/bot tidak dapat dipilih sebagai role akses member.");
+                    }
+                    const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                        config: currentConfig,
+                        noticeType: "error",
+                        noticeMessage: `❌ **Role Ditolak:** ${reasonParts.join(" ") || "Pilih minimal satu role valid."}`,
+                    });
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const mergedRoles = [...new Set([...currentConfig.allowedRoles, ...validPicked])].slice(0, MAX_ALLOWED_ROLES_PER_GUILD);
+
+                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                    allowedRoles: mergedRoles,
+                    roleAccessEnabled: true,
+                    updatedBy: adminId,
+                });
+
+                const addedMentions = validPicked.map((id) => `<@&${id}>`).join(", ");
+                const warnNotes = [];
+                if (rejectedEveryone) warnNotes.push("*(Role `@everyone` diabaikan)*");
+                if (rejectedBotRole) warnNotes.push("*(Role bot diabaikan)*");
+
+                const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                    config: saved,
+                    noticeType: "success",
+                    noticeMessage: `✅ **Daftar Role Izin Diperbarui!** Ditambahkan: ${addedMentions} ${warnNotes.join(" ")}`.trim(),
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "cfg_remove_roles") {
+                const toRemove = new Set((interaction.values || []).map(String));
+                const remaining = currentConfig.allowedRoles.filter((id) => !toRemove.has(String(id)));
+                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                    allowedRoles: remaining,
+                    updatedBy: adminId,
+                });
+                const removedText = [...toRemove].map((id) => `<@&${id}>`).join(", ");
+                const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                    config: saved,
+                    noticeType: "success",
+                    noticeMessage: `🗑️ **Role Dihapus dari Daftar Izin:** ${removedText}`,
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "cfg_clear_roles") {
+                const saved = await saveGuildCustomRoleConfig(client, guild.id, {
+                    allowedRoles: [],
+                    updatedBy: adminId,
+                });
+                const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                    config: saved,
+                    noticeType: "success",
+                    noticeMessage: "🧹 **Seluruh Role Khusus telah dihapus dari daftar izin server ini.**",
+                });
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "cfg_view_roles") {
+                const viewPanel = await buildAllowedRolesListView(client, guild, adminId);
+                await safeEditReply(interaction, viewPanel);
+                return true;
+            }
+
+            if (
+                action === "cfg_member_roles" ||
+                action === "cfg_admin_pick" ||
+                action === "cfg_admin_prev" ||
+                action === "cfg_admin_next"
+            ) {
+                if (action === "cfg_admin_pick") {
+                    draft.adminSelectedRoleId = interaction.values?.[0] || null;
+                } else if (action === "cfg_admin_prev") {
+                    draft.adminPage = Math.max(0, (draft.adminPage || 0) - 1);
+                } else if (action === "cfg_admin_next") {
+                    draft.adminPage = (draft.adminPage || 0) + 1;
+                }
+
+                const panel = await buildAdminMemberRolesPanel(client, guild, adminId);
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+
+            if (action === "cfg_admin_delete" && extraRoleId) {
+                const rec = await getGuildCustomRoleByRoleId(client, guild.id, extraRoleId);
+                if (!rec) {
+                    const panel = await buildAdminMemberRolesPanel(client, guild, adminId, "ℹ️ Role tersebut sudah terhapus.");
+                    await safeEditReply(interaction, panel);
+                    return true;
+                }
+
+                const liveRole = await resolveGuildRole(guild, rec.roleId);
+                if (liveRole) {
+                    const botCheck = await validateBotRoleManagement(guild, liveRole);
+                    if (!botCheck.valid) {
+                        const panel = await buildAdminMemberRolesPanel(client, guild, adminId, `❌ ${botCheck.message}`, "error");
+                        await safeEditReply(interaction, panel);
+                        return true;
+                    }
+                    await liveRole.delete(`Dihapus oleh Admin ${interaction.user.username} melalui /customrole-config`).catch(() => {});
+                }
+
+                await deleteCustomRoleRecord(client, guild.id, rec.userId, rec.roleId);
+                draft.adminSelectedRoleId = null;
+
+                const panel = await buildAdminMemberRolesPanel(
+                    client,
+                    guild,
+                    adminId,
+                    `🗑️ Custom Role **${escapeMarkdown(rec.roleName)}** milik <@${rec.userId}> berhasil dihapus dari Discord & MongoDB.`,
+                    "success",
+                );
+                await safeEditReply(interaction, panel);
+                return true;
+            }
+        } catch (err) {
+            const panel = await buildCustomRoleConfigDashboard(client, guild, adminId, {
+                noticeType: "error",
+                noticeMessage: `❌ **Terjadi Kesalahan Penyimpanan:** \`${escapeInline(err?.message || "Database error")}\``,
+            });
+            await safeEditReply(interaction, panel);
+        }
+
+        return true;
+    });
+}
+
+// ============================================================================
 // Component & Modal Interaction Router
 // ============================================================================
 
-async function requireActiveUserRoleOrWarn(client, guild, interaction) {
+async function requireActiveUserRoleOrWarn(client, guild, interaction, config, canManage) {
     const userId = String(interaction.user.id);
-    const record = await getUserCustomRoleRecord(client, guild.id, userId);
-    const liveRole = record?.roleId ? await resolveGuildRole(guild, record.roleId) : null;
+    const roleCtx = await resolveUserRoleContext(client, guild, userId);
 
-    if (!record || !liveRole) {
+    if (!roleCtx.selectedRecord || !roleCtx.selectedLiveRole) {
         const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-            record,
-            isStrictAdmin: isUserStrictAdmin(interaction, guild),
+            config,
+            roleCtx,
+            canManageConfig: canManage,
             noticeType: "warning",
             noticeMessage:
                 "⚠️ **Anda belum memiliki Custom Role aktif di server ini.** Silakan pilih menu **➕ Buat Role** terlebih dahulu!",
@@ -1921,7 +3025,16 @@ async function requireActiveUserRoleOrWarn(client, guild, interaction) {
         return null;
     }
 
-    return { record, liveRole };
+    // Strict ownership enforcement: member can ONLY manage their own role
+    if (String(roleCtx.selectedRecord.userId) !== userId) {
+        return null;
+    }
+
+    return {
+        roleCtx,
+        record: roleCtx.selectedRecord,
+        liveRole: roleCtx.selectedLiveRole,
+    };
 }
 
 async function handleCustomRoleInteraction(client, interaction) {
@@ -1931,6 +3044,7 @@ async function handleCustomRoleInteraction(client, interaction) {
     const parts = customId.split(":");
     const action = parts[1];
     const ownerUserId = parts[2];
+    const extraTargetRoleId = parts[3] || null;
 
     const guild = interaction.guild || client.guilds.cache.get(interaction.guildId);
     const botAvatar = getBotAvatarUrl(client);
@@ -1946,8 +3060,10 @@ async function handleCustomRoleInteraction(client, interaction) {
     if (ownerUserId && String(interaction.user.id) !== String(ownerUserId)) {
         const notOwnerEmbed = new EmbedBuilder()
             .setColor(CR_COLORS.ERROR)
-            .setTitle("⛔ Dashboard Milik Pengguna Lain")
-            .setDescription("Silakan jalankan perintah `/customrole` sendiri untuk membuka dashboard Custom Role Anda.")
+            .setTitle("🔒 AKSES DITOLAK — BUKAN MILIKMU")
+            .setDescription(
+                "Setiap member hanya boleh mengelola Custom Role miliknya sendiri. Silakan jalankan `/customrole` untuk membuka dashboard milikmu.",
+            )
             .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
             .setTimestamp();
 
@@ -1955,22 +3071,25 @@ async function handleCustomRoleInteraction(client, interaction) {
         return true;
     }
 
-    // Re-verify server access policy on every action
+    // Route `/customrole-config` Admin actions (`cfg_*` & `modal_cfg_*`)
+    if (action.startsWith("cfg_") || action.startsWith("modal_cfg_")) {
+        return handleAdminConfigInteraction(client, guild, interaction, action, extraTargetRoleId);
+    }
+
+    // Re-verify server access eligibility on EVERY member action (handles instant revocation if Booster/Role lost!)
     const access = await checkCustomRoleAccess(client, guild, interaction);
     if (!access.allowed) {
-        const deniedEmbed = new EmbedBuilder()
-            .setColor(CR_COLORS.ERROR)
-            .setTitle("⛔ Akses Custom Role Dibatasi")
-            .setDescription(access.reason)
-            .setFooter({ text: CR_FOOTER, iconURL: botAvatar })
-            .setTimestamp();
+        stopActiveImageCollector(guild.id, String(interaction.user.id), "access_revoked");
+        clearDraft(client, guild.id, String(interaction.user.id));
 
+        const deniedEmbed = buildCustomRoleAccessDeniedEmbed(client, access.code);
         await safeReply(interaction, { embeds: [deniedEmbed], flags: MessageFlags.Ephemeral });
         return true;
     }
 
     const userId = String(interaction.user.id);
-    const isAdmin = isUserStrictAdmin(interaction, guild);
+    const canManage = canManageCustomRoleConfig(interaction, guild);
+    const config = access.config;
 
     // ------------------------------------------------------------------------
     // 1. Actions that MUST open a Modal immediately (BEFORE deferUpdate!)
@@ -1978,23 +3097,19 @@ async function handleCustomRoleInteraction(client, interaction) {
     const selectedMenuAction = action === "menu" ? interaction.values?.[0] : null;
 
     if (selectedMenuAction === "create" || action === "quick_create") {
-        const existingRecord = await getUserCustomRoleRecord(client, guild.id, userId);
-        const existingLiveRole = existingRecord?.roleId ? await resolveGuildRole(guild, existingRecord.roleId) : null;
+        const roleCtx = await resolveUserRoleContext(client, guild, userId);
+        const maxAllowed = config.maxRolesPerMember || 1;
 
-        if (existingRecord && existingLiveRole) {
-            if (action === "quick_create") {
-                await safeShowModal(interaction, createRenameModal(userId, existingLiveRole.name));
-                return true;
-            }
-
+        if (roleCtx.activePairs.length >= maxAllowed) {
             const ack = await safeDeferUpdate(interaction);
             if (!ack) return true;
 
             const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                record: existingRecord,
-                isStrictAdmin: isAdmin,
+                config,
+                roleCtx,
+                canManageConfig: canManage,
                 noticeType: "warning",
-                noticeMessage: `ℹ️ Anda sudah memiliki Custom Role aktif (<@&${existingLiveRole.id}>) di server ini. Gunakan menu **Ubah Nama**, **Ubah Warna**, **Atur Gradasi**, atau **Atur Gambar Role**.`,
+                noticeMessage: `⚠️ Kamu sudah mencapai batas maksimal Custom Role di server ini (**${roleCtx.activePairs.length}/${maxAllowed}** Custom Role). Gunakan menu **Ubah Nama**, **Ubah Warna**, **Atur Gradasi**, atau **Atur Gambar Role** untuk mengelola role milikmu.`,
             });
             await safeEditReply(interaction, panel);
             return true;
@@ -2004,25 +3119,24 @@ async function handleCustomRoleInteraction(client, interaction) {
         return true;
     }
 
-    if (selectedMenuAction === "rename") {
-        const existingRecord = await getUserCustomRoleRecord(client, guild.id, userId);
-        const existingLiveRole = existingRecord?.roleId ? await resolveGuildRole(guild, existingRecord.roleId) : null;
-
-        if (!existingRecord || !existingLiveRole) {
+    if (selectedMenuAction === "rename" || action === "quick_rename") {
+        const roleCtx = await resolveUserRoleContext(client, guild, userId);
+        if (!roleCtx.selectedRecord || !roleCtx.selectedLiveRole) {
             const ack = await safeDeferUpdate(interaction);
             if (!ack) return true;
-            await requireActiveUserRoleOrWarn(client, guild, interaction);
+            await requireActiveUserRoleOrWarn(client, guild, interaction, config, canManage);
             return true;
         }
 
-        await safeShowModal(interaction, createRenameModal(userId, existingLiveRole.name));
+        await safeShowModal(interaction, createRenameModal(userId, roleCtx.selectedRecord.roleId, roleCtx.selectedLiveRole.name, false));
         return true;
     }
 
     if (action === "color_hex_modal") {
         const draft = getOrInitDraft(client, guild.id, userId);
-        const record = await getUserCustomRoleRecord(client, guild.id, userId);
-        await safeShowModal(interaction, createHexInputModal(userId, draft.colorHex || record?.color || "#00E5FF"));
+        const roleCtx = await resolveUserRoleContext(client, guild, userId);
+        const rec = roleCtx.selectedRecord;
+        await safeShowModal(interaction, createHexInputModal(userId, rec?.roleId || "0", draft.colorHex || rec?.color || "#00E5FF", false));
         return true;
     }
 
@@ -2053,14 +3167,16 @@ async function handleCustomRoleInteraction(client, interaction) {
                 const rawName = interaction.fields.getTextInputValue("role_name");
                 const rawHex = interaction.fields.getTextInputValue("role_hex") || "#00E5FF";
 
-                const existingRecord = await getUserCustomRoleRecord(client, guild.id, userId);
-                const existingLive = existingRecord?.roleId ? await resolveGuildRole(guild, existingRecord.roleId) : null;
-                if (existingRecord && existingLive) {
+                const roleCtx = await resolveUserRoleContext(client, guild, userId);
+                const maxAllowed = config.maxRolesPerMember || 1;
+
+                if (roleCtx.activePairs.length >= maxAllowed) {
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record: existingRecord,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        roleCtx,
+                        canManageConfig: canManage,
                         noticeType: "warning",
-                        noticeMessage: `⚠️ Anda sudah memiliki Custom Role <@&${existingLive.id}> di server ini.`,
+                        noticeMessage: `⚠️ Kamu sudah mencapai batas maksimal Custom Role di server ini (**${roleCtx.activePairs.length}/${maxAllowed}** Custom Role).`,
                     });
                     await safeEditReply(interaction, panel);
                     return true;
@@ -2069,8 +3185,9 @@ async function handleCustomRoleInteraction(client, interaction) {
                 const botCheck = await validateBotRoleManagement(guild);
                 if (!botCheck.valid) {
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record: null,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        roleCtx,
+                        canManageConfig: canManage,
                         noticeType: "error",
                         noticeMessage: `❌ **Gagal Membuat Role:**\n${botCheck.message}`,
                     });
@@ -2081,8 +3198,9 @@ async function handleCustomRoleInteraction(client, interaction) {
                 const nameCheck = validateCustomRoleName(guild, rawName);
                 if (!nameCheck.valid) {
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record: null,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        roleCtx,
+                        canManageConfig: canManage,
                         noticeType: "error",
                         noticeMessage: `❌ **Nama Role Tidak Valid:**\n${nameCheck.message}`,
                     });
@@ -2093,13 +3211,19 @@ async function handleCustomRoleInteraction(client, interaction) {
                 const colorCheck = parseAndValidateHexColor(rawHex);
                 if (!colorCheck.valid) {
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record: null,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        roleCtx,
+                        canManageConfig: canManage,
                         noticeType: "error",
                         noticeMessage: `❌ **Kode Warna Tidak Valid:**\n${colorCheck.message}`,
                     });
                     await safeEditReply(interaction, panel);
                     return true;
+                }
+
+                // Clean up stale DB records whose Discord roles were already deleted manually
+                for (const orphan of roleCtx.orphanPairs) {
+                    await deleteCustomRoleRecord(client, guild.id, userId, orphan.record.roleId).catch(() => {});
                 }
 
                 let createdRole;
@@ -2118,8 +3242,8 @@ async function handleCustomRoleInteraction(client, interaction) {
                 } catch (discordErr) {
                     Logger.error("[CustomRole] Gagal membuat role Discord:", discordErr);
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record: null,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        canManageConfig: canManage,
                         noticeType: "error",
                         noticeMessage:
                             "❌ **Gagal Membuat Role di Discord:** Pastikan bot memiliki izin `Manage Roles` dan jumlah role server belum mencapai batas maksimal Discord (250 role).",
@@ -2135,9 +3259,8 @@ async function handleCustomRoleInteraction(client, interaction) {
                     });
                 }
 
-                let savedRecord;
                 try {
-                    savedRecord = await saveUserCustomRoleRecord(client, {
+                    await saveUserCustomRoleRecord(client, {
                         guildId: guild.id,
                         userId,
                         roleId: createdRole.id,
@@ -2154,11 +3277,10 @@ async function handleCustomRoleInteraction(client, interaction) {
                         imageMeta: {},
                     });
                 } catch (dbErr) {
-                    // Rollback orphan Discord role if MongoDB write fails
                     await createdRole.delete("Rollback karena penyimpanan MongoDB gagal").catch(() => {});
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record: null,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        canManageConfig: canManage,
                         noticeType: "error",
                         noticeMessage: `❌ **Gagal Menyimpan ke MongoDB:** \`${escapeInline(dbErr?.message || "Kesalahan database")}\``,
                     });
@@ -2166,10 +3288,13 @@ async function handleCustomRoleInteraction(client, interaction) {
                     return true;
                 }
 
-                clearDraft(client, guild.id, userId);
+                const draft = getOrInitDraft(client, guild.id, userId);
+                draft.selectedRoleId = String(createdRole.id);
+                clearEditDraftFields(client, guild.id, userId);
+
                 const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                    record: savedRecord,
-                    isStrictAdmin: isAdmin,
+                    config,
+                    canManageConfig: canManage,
                     noticeType: "success",
                     noticeMessage: `🎉 **Custom Role Berhasil Dibuat!** Role <@&${createdRole.id}> dengan warna \`${colorCheck.hex}\` telah dibuat, dipasang ke akun Anda, dan disimpan ke MongoDB.`,
                 });
@@ -2178,15 +3303,15 @@ async function handleCustomRoleInteraction(client, interaction) {
             }
 
             if (action === "modal_rename") {
-                const found = await requireActiveUserRoleOrWarn(client, guild, interaction);
+                const found = await requireActiveUserRoleOrWarn(client, guild, interaction, config, canManage);
                 if (!found) return true;
                 const { record, liveRole } = found;
 
                 const botCheck = await validateBotRoleManagement(guild, liveRole);
                 if (!botCheck.valid) {
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        canManageConfig: canManage,
                         noticeType: "error",
                         noticeMessage: `❌ **Tidak Dapat Mengubah Role:**\n${botCheck.message}`,
                     });
@@ -2198,8 +3323,8 @@ async function handleCustomRoleInteraction(client, interaction) {
                 const nameCheck = validateCustomRoleName(guild, rawName, liveRole.id);
                 if (!nameCheck.valid) {
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        canManageConfig: canManage,
                         noticeType: "error",
                         noticeMessage: `❌ **Nama Role Tidak Valid:**\n${nameCheck.message}`,
                     });
@@ -2212,8 +3337,8 @@ async function handleCustomRoleInteraction(client, interaction) {
                 } catch (discordErr) {
                     Logger.error("[CustomRole] Gagal mengubah nama role di Discord:", discordErr);
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        canManageConfig: canManage,
                         noticeType: "error",
                         noticeMessage: "❌ **Gagal Mengubah Nama Role di Discord.** Coba beberapa saat lagi.",
                     });
@@ -2221,16 +3346,15 @@ async function handleCustomRoleInteraction(client, interaction) {
                     return true;
                 }
 
-                let savedRecord;
                 try {
-                    savedRecord = await saveUserCustomRoleRecord(client, {
+                    await saveUserCustomRoleRecord(client, {
                         ...record,
                         roleName: nameCheck.name,
                     });
                 } catch (dbErr) {
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        canManageConfig: canManage,
                         noticeType: "error",
                         noticeMessage: `⚠️ Nama role di Discord berubah, namun gagal memperbarui MongoDB: \`${escapeInline(dbErr?.message)}\``,
                     });
@@ -2239,8 +3363,8 @@ async function handleCustomRoleInteraction(client, interaction) {
                 }
 
                 const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                    record: savedRecord,
-                    isStrictAdmin: isAdmin,
+                    config,
+                    canManageConfig: canManage,
                     noticeType: "success",
                     noticeMessage: `✅ **Nama Role Berhasil Diperbarui!** Custom Role Anda kini bernama **${escapeMarkdown(nameCheck.name)}** (<@&${liveRole.id}>).`,
                 });
@@ -2249,7 +3373,7 @@ async function handleCustomRoleInteraction(client, interaction) {
             }
 
             if (action === "modal_hex") {
-                const found = await requireActiveUserRoleOrWarn(client, guild, interaction);
+                const found = await requireActiveUserRoleOrWarn(client, guild, interaction, config, canManage);
                 if (!found) return true;
                 const { record, liveRole } = found;
 
@@ -2285,7 +3409,7 @@ async function handleCustomRoleInteraction(client, interaction) {
             }
 
             if (action === "modal_gradient") {
-                const found = await requireActiveUserRoleOrWarn(client, guild, interaction);
+                const found = await requireActiveUserRoleOrWarn(client, guild, interaction, config, canManage);
                 if (!found) return true;
                 const { record, liveRole } = found;
 
@@ -2333,7 +3457,7 @@ async function handleCustomRoleInteraction(client, interaction) {
             }
 
             if (action === "modal_image") {
-                const found = await requireActiveUserRoleOrWarn(client, guild, interaction);
+                const found = await requireActiveUserRoleOrWarn(client, guild, interaction, config, canManage);
                 if (!found) return true;
                 const { record, liveRole } = found;
 
@@ -2391,42 +3515,49 @@ async function handleCustomRoleInteraction(client, interaction) {
 
     return withCustomRoleLock(guild.id, userId, async () => {
         if (action === "cancel") {
-            const pendingCollector = activeChatUploadCollectors.get(`${guild.id}:${userId}`);
-            if (pendingCollector) {
-                pendingCollector.stop("cancelled");
-                activeChatUploadCollectors.delete(`${guild.id}:${userId}`);
-            }
-            clearDraft(client, guild.id, userId);
+            stopActiveImageCollector(guild.id, userId, "cancelled");
+            clearEditDraftFields(client, guild.id, userId);
             const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                isStrictAdmin: isAdmin,
+                config,
+                canManageConfig: canManage,
             });
             await safeEditReply(interaction, panel);
             return true;
         }
 
-        // Main menu navigation (`color`, `gradient`, `image`, `view`, `delete`, `admin_policy`)
+        if (action === "select_own_role") {
+            const pickedRoleId = interaction.values?.[0] || null;
+            const draft = getOrInitDraft(client, guild.id, userId);
+            draft.selectedRoleId = pickedRoleId;
+            clearEditDraftFields(client, guild.id, userId);
+
+            const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
+                config,
+                canManageConfig: canManage,
+                noticeType: "success",
+                noticeMessage: pickedRoleId ? `🎭 Menampilkan Custom Role <@&${pickedRoleId}> milikmu.` : null,
+            });
+            await safeEditReply(interaction, panel);
+            return true;
+        }
+
         const navTarget =
             selectedMenuAction ||
             (action === "quick_color" ? "color" : action === "quick_gradient" ? "gradient" : action === "quick_image" ? "image" : null);
 
-        if (navTarget === "admin_policy") {
-            if (!isAdmin) {
-                const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                    isStrictAdmin: false,
-                    noticeType: "error",
-                    noticeMessage: "⛔ Hanya **Administrator** server yang dapat mengubah pengaturan izin akses Custom Role.",
-                });
-                await safeEditReply(interaction, panel);
+        if (navTarget === "open_config") {
+            if (!canManage) {
+                const denied = buildAdminConfigDeniedEmbed(client);
+                await safeEditReply(interaction, { embeds: [denied], components: [], files: [] });
                 return true;
             }
-
-            const policyPanel = await buildAdminPolicyPanel(client, guild, userId);
-            await safeEditReply(interaction, policyPanel);
+            const cfgPanel = await buildCustomRoleConfigDashboard(client, guild, userId, { config });
+            await safeEditReply(interaction, cfgPanel);
             return true;
         }
 
         if (navTarget) {
-            const found = await requireActiveUserRoleOrWarn(client, guild, interaction);
+            const found = await requireActiveUserRoleOrWarn(client, guild, interaction, config, canManage);
             if (!found) return true;
             const { record, liveRole } = found;
 
@@ -2463,59 +3594,6 @@ async function handleCustomRoleInteraction(client, interaction) {
             }
         }
 
-        // Admin Policy Updates
-        if (action === "policy_mode" || action === "policy_role") {
-            if (!isAdmin) return true;
-            const currentPolicy = await getGuildCustomRolePolicy(client, guild.id);
-
-            try {
-                if (action === "policy_mode") {
-                    const nextMode = interaction.values?.[0] || "admin_only";
-                    await saveGuildCustomRolePolicy(client, guild.id, {
-                        ...currentPolicy,
-                        accessMode: nextMode,
-                        updatedBy: userId,
-                    });
-                } else {
-                    const pickedRoleId = interaction.values?.[0] || null;
-                    if (pickedRoleId && String(pickedRoleId) === String(guild.id)) {
-                        const panel = await buildAdminPolicyPanel(
-                            client,
-                            guild,
-                            userId,
-                            "⚠️ Role `@everyone` tidak perlu dipilih sebagai role khusus — gunakan mode **Semua Member Server** jika ingin membuka akses untuk seluruh anggota.",
-                        );
-                        await safeEditReply(interaction, panel);
-                        return true;
-                    }
-
-                    await saveGuildCustomRolePolicy(client, guild.id, {
-                        ...currentPolicy,
-                        accessMode: "role_required",
-                        requiredRoleId: pickedRoleId,
-                        updatedBy: userId,
-                    });
-                }
-
-                const panel = await buildAdminPolicyPanel(
-                    client,
-                    guild,
-                    userId,
-                    "✅ **Kebijakan akses Custom Role server berhasil disimpan ke MongoDB!**",
-                );
-                await safeEditReply(interaction, panel);
-            } catch (dbErr) {
-                const panel = await buildAdminPolicyPanel(
-                    client,
-                    guild,
-                    userId,
-                    `❌ **Gagal Menyimpan ke MongoDB:** \`${escapeInline(dbErr?.message)}\``,
-                );
-                await safeEditReply(interaction, panel);
-            }
-            return true;
-        }
-
         // Color Studio Actions
         if (
             action === "color_preset" ||
@@ -2525,7 +3603,7 @@ async function handleCustomRoleInteraction(client, interaction) {
             action === "picker_bright_down" ||
             action === "color_save"
         ) {
-            const found = await requireActiveUserRoleOrWarn(client, guild, interaction);
+            const found = await requireActiveUserRoleOrWarn(client, guild, interaction, config, canManage);
             if (!found) return true;
             const { record, liveRole } = found;
             const draft = getOrInitDraft(client, guild.id, userId);
@@ -2612,7 +3690,7 @@ async function handleCustomRoleInteraction(client, interaction) {
                 return true;
             }
 
-            const savedRecord = await saveUserCustomRoleRecord(client, {
+            await saveUserCustomRoleRecord(client, {
                 ...record,
                 color: parsed.hex,
                 gradient: {
@@ -2622,10 +3700,10 @@ async function handleCustomRoleInteraction(client, interaction) {
                 },
             });
 
-            clearDraft(client, guild.id, userId);
+            clearEditDraftFields(client, guild.id, userId);
             const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                record: savedRecord,
-                isStrictAdmin: isAdmin,
+                config,
+                canManageConfig: canManage,
                 noticeType: "success",
                 noticeMessage: `✅ **Warna Role Berhasil Disimpan!** Warna \`${parsed.hex}\` telah langsung diterapkan pada role <@&${liveRole.id}> dan disimpan ke MongoDB.`,
             });
@@ -2635,7 +3713,7 @@ async function handleCustomRoleInteraction(client, interaction) {
 
         // Gradient Studio Actions
         if (action === "grad_preset" || action === "grad_dir" || action === "grad_save") {
-            const found = await requireActiveUserRoleOrWarn(client, guild, interaction);
+            const found = await requireActiveUserRoleOrWarn(client, guild, interaction, config, canManage);
             if (!found) return true;
             const { record, liveRole } = found;
             const draft = getOrInitDraft(client, guild.id, userId);
@@ -2764,7 +3842,6 @@ async function handleCustomRoleInteraction(client, interaction) {
                         statusNotice = `✅ **Desain Gradasi Disimpan ke MongoDB!** Karena server ini belum memiliki fitur \`Enhanced Role Styles\` Discord, warna utama \`${p1.hex}\` diterapkan pada role <@&${liveRole.id}> dan desain gradasi penuh (${grad.colors.map((c) => `\`${c}\``).join(" → ")}) disimpan sebagai **Desain Preview Custom Role**.`;
                     }
                 } catch (discordErr) {
-                    // Graceful fallback if Discord API rejects enhanced colors unexpectedly
                     Logger.warn(`[CustomRole] Fallback ke warna solid saat menyimpan gradasi: ${discordErr.message}`);
                     await liveRole
                         .setColors({
@@ -2777,7 +3854,7 @@ async function handleCustomRoleInteraction(client, interaction) {
                     statusNotice = `✅ Warna utama \`${p1.hex}\` diterapkan pada role <@&${liveRole.id}>, dan desain gradasi disimpan sebagai **Desain Preview** di MongoDB.`;
                 }
 
-                const savedRecord = await saveUserCustomRoleRecord(client, {
+                await saveUserCustomRoleRecord(client, {
                     ...record,
                     color: p1.hex,
                     gradient: {
@@ -2789,10 +3866,10 @@ async function handleCustomRoleInteraction(client, interaction) {
                     },
                 });
 
-                clearDraft(client, guild.id, userId);
+                clearEditDraftFields(client, guild.id, userId);
                 const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                    record: savedRecord,
-                    isStrictAdmin: isAdmin,
+                    config,
+                    canManageConfig: canManage,
                     noticeType: "success",
                     noticeMessage: statusNotice,
                 });
@@ -2803,7 +3880,7 @@ async function handleCustomRoleInteraction(client, interaction) {
 
         // Image Studio Actions (`img_upload_chat`, `img_save`, `img_remove`)
         if (action === "img_upload_chat" || action === "img_save" || action === "img_remove") {
-            const found = await requireActiveUserRoleOrWarn(client, guild, interaction);
+            const found = await requireActiveUserRoleOrWarn(client, guild, interaction, config, canManage);
             if (!found) return true;
             const { record, liveRole } = found;
             const capabilities = detectGuildCustomRoleCapabilities(guild);
@@ -2825,8 +3902,7 @@ async function handleCustomRoleInteraction(client, interaction) {
                 }
 
                 const existingKey = `${guild.id}:${userId}`;
-                const prevCollector = activeChatUploadCollectors.get(existingKey);
-                if (prevCollector) prevCollector.stop("replaced");
+                stopActiveImageCollector(guild.id, userId, "replaced");
 
                 const collector = interaction.channel.createMessageCollector({
                     filter: (m) => m.author?.id === userId && m.attachments?.size > 0,
@@ -2837,10 +3913,28 @@ async function handleCustomRoleInteraction(client, interaction) {
 
                 collector.on("collect", async (msg) => {
                     activeChatUploadCollectors.delete(existingKey);
+
+                    // Re-verify eligibility before accepting delayed chat attachment!
+                    const freshMember = await resolveGuildMember(guild, userId, msg.member);
+                    const freshConfig = await getGuildCustomRoleConfig(client, guild.id);
+                    const freshCheck = evaluateMemberEligibilityWithConfig(
+                        guild,
+                        freshConfig,
+                        freshMember,
+                        msg.member,
+                        canManageCustomRoleConfig(freshMember || interaction, guild),
+                    );
+
+                    if (!freshCheck.allowed) {
+                        clearDraft(client, guild.id, userId);
+                        const deniedEmbed = buildCustomRoleAccessDeniedEmbed(client, freshCheck.code);
+                        await safeEditReply(interaction, { embeds: [deniedEmbed], components: [], files: [] });
+                        return;
+                    }
+
                     const att = msg.attachments.first();
                     const validation = await validateAndDownloadRoleImage(att, capabilities.hasRoleIcons);
 
-                    // Note: Do NOT delete `msg` before saving if we keep CDN URL, or keep buffer for role.setIcon!
                     if (!validation.valid) {
                         const errPanel = await buildImageStudioPanel(
                             client,
@@ -2922,7 +4016,7 @@ async function handleCustomRoleInteraction(client, interaction) {
                     await liveRole.setIcon(null, `Lagukan Custom Role: Hapus gambar oleh ${interaction.user.username}`).catch(() => {});
                 }
 
-                const savedRecord = await saveUserCustomRoleRecord(client, {
+                await saveUserCustomRoleRecord(client, {
                     ...record,
                     imageUrl: null,
                     imageMeta: {},
@@ -2930,8 +4024,8 @@ async function handleCustomRoleInteraction(client, interaction) {
                 draft.pendingImage = null;
 
                 const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                    record: savedRecord,
-                    isStrictAdmin: isAdmin,
+                    config,
+                    canManageConfig: canManage,
                     noticeType: "success",
                     noticeMessage: "🗑️ **Gambar / Ikon Custom Role berhasil dihapus.**",
                 });
@@ -2999,7 +4093,7 @@ async function handleCustomRoleInteraction(client, interaction) {
                         "✅ **Gambar & Metadata Disimpan ke MongoDB!** Karena server ini belum mencapai **Boost Level 2 (`ROLE_ICONS`)**, gambar disimpan sebagai preview desain Custom Role Anda.";
                 }
 
-                const savedRecord = await saveUserCustomRoleRecord(client, {
+                await saveUserCustomRoleRecord(client, {
                     ...record,
                     imageUrl: draft.pendingImage.meta.url,
                     imageMeta: {
@@ -3012,10 +4106,10 @@ async function handleCustomRoleInteraction(client, interaction) {
                     },
                 });
 
-                clearDraft(client, guild.id, userId);
+                clearEditDraftFields(client, guild.id, userId);
                 const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                    record: savedRecord,
-                    isStrictAdmin: isAdmin,
+                    config,
+                    canManageConfig: canManage,
                     noticeType: "success",
                     noticeMessage: saveNotice,
                 });
@@ -3024,27 +4118,32 @@ async function handleCustomRoleInteraction(client, interaction) {
             }
         }
 
-        // Delete Custom Role Confirmation
+        // Delete Custom Role Confirmation (Strictly owner-only)
         if (action === "delete_confirm") {
-            const record = await getUserCustomRoleRecord(client, guild.id, userId);
-            if (!record) {
+            const roleCtx = await resolveUserRoleContext(client, guild, userId);
+            const targetId = extraTargetRoleId || roleCtx.selectedRecord?.roleId;
+            const targetPair = roleCtx.pairs.find(
+                (p) => String(p.record.roleId) === String(targetId) && String(p.record.userId) === userId,
+            );
+
+            if (!targetPair) {
                 const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                    record: null,
-                    isStrictAdmin: isAdmin,
+                    config,
+                    canManageConfig: canManage,
                     noticeType: "warning",
-                    noticeMessage: "ℹ️ Anda memang belum memiliki Custom Role yang tersimpan di server ini.",
+                    noticeMessage: "ℹ️ Custom Role tersebut tidak ditemukan atau bukan milik Anda.",
                 });
                 await safeEditReply(interaction, panel);
                 return true;
             }
 
-            const liveRole = record.roleId ? await resolveGuildRole(guild, record.roleId) : null;
+            const { record, liveRole } = targetPair;
             if (liveRole) {
                 const botCheck = await validateBotRoleManagement(guild, liveRole);
                 if (!botCheck.valid) {
                     const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                        record,
-                        isStrictAdmin: isAdmin,
+                        config,
+                        canManageConfig: canManage,
                         noticeType: "error",
                         noticeMessage: `❌ **Gagal Menghapus Role di Discord:**\n${botCheck.message}`,
                     });
@@ -3057,12 +4156,14 @@ async function handleCustomRoleInteraction(client, interaction) {
                 });
             }
 
-            await deleteUserCustomRoleRecord(client, guild.id, userId);
-            clearDraft(client, guild.id, userId);
+            await deleteCustomRoleRecord(client, guild.id, userId, record.roleId);
+            const draft = getOrInitDraft(client, guild.id, userId);
+            draft.selectedRoleId = null;
+            clearEditDraftFields(client, guild.id, userId);
 
             const panel = await buildCustomRoleDashboard(client, guild, interaction.user, {
-                record: null,
-                isStrictAdmin: isAdmin,
+                config,
+                canManageConfig: canManage,
                 noticeType: "success",
                 noticeMessage: `🗑️ **Custom Role Berhasil Dihapus!** Role **${escapeMarkdown(record.roleName)}** dan datanya pada server ini telah dihapus dari Discord & MongoDB.`,
             });
@@ -3086,15 +4187,19 @@ module.exports = {
     validateCustomRoleName,
     detectGuildCustomRoleCapabilities,
     validateAndDownloadRoleImage,
-    isUserAdminOrRoleManager,
+    canManageCustomRoleConfig,
     isUserStrictAdmin,
     checkCustomRoleAccess,
-    getGuildCustomRolePolicy,
-    saveGuildCustomRolePolicy,
-    getUserCustomRoleRecord,
+    buildCustomRoleAccessDeniedEmbed,
+    buildAdminConfigDeniedEmbed,
+    handleGuildMemberCustomRoleAccessUpdate,
+    getGuildCustomRoleConfig,
+    saveGuildCustomRoleConfig,
+    getUserCustomRoleRecords,
     saveUserCustomRoleRecord,
-    deleteUserCustomRoleRecord,
+    deleteCustomRoleRecord,
     buildCustomRoleDashboard,
+    buildCustomRoleConfigDashboard,
     handleCustomRoleInteraction,
 };
 
