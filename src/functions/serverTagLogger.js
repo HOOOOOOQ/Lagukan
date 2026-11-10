@@ -277,8 +277,34 @@ function getMemberCacheKey(guildId, userId) {
     return `tagMember_${guildId}_${userId}`;
 }
 
-function hasAdminPermission(member) {
-    return Boolean(member?.permissions?.has?.(PermissionsBitField.Flags.Administrator));
+function hasAdminPermission(memberOrInteraction, guild = null) {
+    if (!memberOrInteraction) return false;
+
+    const targetGuild = guild || memberOrInteraction.guild || null;
+    const userId = memberOrInteraction.user?.id || memberOrInteraction.member?.user?.id || memberOrInteraction.id || null;
+
+    if (targetGuild?.ownerId && userId && String(targetGuild.ownerId) === String(userId)) {
+        return true;
+    }
+
+    if (typeof memberOrInteraction.memberPermissions?.has === "function") {
+        return memberOrInteraction.memberPermissions.has(PermissionsBitField.Flags.Administrator);
+    }
+
+    const rawPerms = memberOrInteraction.permissions ?? memberOrInteraction.member?.permissions;
+    if (typeof rawPerms?.has === "function") {
+        return rawPerms.has(PermissionsBitField.Flags.Administrator);
+    }
+
+    if (typeof rawPerms === "string" || typeof rawPerms === "bigint" || typeof rawPerms === "number") {
+        try {
+            return new PermissionsBitField(BigInt(rawPerms)).has(PermissionsBitField.Flags.Administrator);
+        } catch {
+            return false;
+        }
+    }
+
+    return false;
 }
 
 function getBotAvatarUrl(client) {
@@ -427,10 +453,66 @@ async function ensureServerTagConfig(client, guildOrId) {
     return initialDefaults;
 }
 
-async function saveServerTagConfig(client, guildId, nextData, guild = null) {
+async function withMongoTimeout(promise, ms = 8000) {
+    let timer = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((_, reject) => {
+                timer = setTimeout(() => {
+                    const timeoutErr = new Error("Waktu tunggu koneksi ke database MongoDB habis (timeout).");
+                    timeoutErr.code = "MONGO_TIMEOUT";
+                    reject(timeoutErr);
+                }, ms);
+            }),
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+async function saveServerTagConfig(client, guildId, nextData, guild = null, options = {}) {
     const gId = String(guildId);
     const cacheKey = getConfigCacheKey(gId);
     const normalized = normalizeServerTagConfig(gId, { ...nextData, guildId: gId }, guild);
+    const strictMongo = Boolean(options?.strictMongo);
+
+    if (strictMongo) {
+        if (!isMongoReady()) {
+            const connErr = new Error("Database MongoDB sedang tidak terhubung. Pastikan MONGO_URI aktif dan koneksi jaringan stabil.");
+            connErr.code = "MONGO_NOT_CONNECTED";
+            throw connErr;
+        }
+
+        const ConfigModel = getConfigModel(client);
+        let savedDoc;
+        try {
+            savedDoc = await withMongoTimeout(
+                ConfigModel.findOneAndUpdate({ guildId: gId }, { $set: normalized }, { upsert: true, returnDocument: "after" }).lean(),
+                8000,
+            );
+        } catch (err) {
+            Logger.error(`[ServerTagLogger] Gagal menyimpan konfigurasi Server Tag ke MongoDB untuk guild ${gId}:`, err);
+            const saveErr = new Error(
+                err?.code === "MONGO_TIMEOUT"
+                    ? err.message
+                    : `Gagal menyimpan data ke database MongoDB (${err?.message || "kesalahan database"}).`,
+            );
+            saveErr.code = err?.code || "MONGO_WRITE_FAILED";
+            throw saveErr;
+        }
+
+        if (!savedDoc) {
+            const emptyErr = new Error("Database MongoDB tidak mengembalikan konfirmasi penyimpanan konfigurasi.");
+            emptyErr.code = "MONGO_EMPTY_RESULT";
+            throw emptyErr;
+        }
+
+        const { _id, __v, ...rawSaved } = savedDoc;
+        const verified = normalizeServerTagConfig(gId, rawSaved, guild);
+        client.data.set(cacheKey, verified);
+        return verified;
+    }
 
     client.data.set(cacheKey, normalized);
 
@@ -446,7 +528,7 @@ async function saveServerTagConfig(client, guildId, nextData, guild = null) {
     return normalized;
 }
 
-async function setServerTagLogChannel(client, guild, channelId, actorUserId) {
+async function setServerTagLogChannel(client, guild, channelId, actorUserId, options = { strictMongo: true }) {
     const guildId = String(guild.id);
     const current = await ensureServerTagConfig(client, guild);
 
@@ -463,12 +545,24 @@ async function setServerTagLogChannel(client, guild, channelId, actorUserId) {
             updatedAt: new Date(),
         },
         guild,
+        { strictMongo: options?.strictMongo !== false },
     );
 
-    const { syncedCount, detectedTag } = await syncGuildMemberTagsBaseline(client, guild).catch(() => ({
-        syncedCount: 0,
+    // Run a fast bounded baseline check (max 2.5s) and let full member sync continue in background if needed
+    const baselinePromise = syncGuildMemberTagsBaseline(client, guild).catch(() => ({
+        syncedCount: guild.members?.cache ? [...guild.members.cache.values()].filter((m) => !m.user?.bot).length : 0,
         detectedTag: null,
     }));
+
+    const { syncedCount, detectedTag } = await Promise.race([
+        baselinePromise,
+        new Promise((resolve) => {
+            const cachedMembers = guild.members?.cache;
+            const quickTag = detectGuildOwnTagFromMembers(guild, cachedMembers);
+            const quickCount = cachedMembers ? [...cachedMembers.values()].filter((m) => !m.user?.bot).length : 0;
+            setTimeout(() => resolve({ syncedCount: quickCount, detectedTag: quickTag?.tag || null }), 2500);
+        }),
+    ]);
 
     const finalConfig = await ensureServerTagConfig(client, guild);
 
@@ -479,7 +573,7 @@ async function setServerTagLogChannel(client, guild, channelId, actorUserId) {
     };
 }
 
-async function resetServerTagLogChannel(client, guild, actorUserId) {
+async function resetServerTagLogChannel(client, guild, actorUserId, options = { strictMongo: true }) {
     const guildId = String(guild.id);
     const current = await ensureServerTagConfig(client, guild);
     const wasConfigured = Boolean(current.enabled || current.logChannelId);
@@ -498,6 +592,7 @@ async function resetServerTagLogChannel(client, guild, actorUserId) {
             updatedAt: new Date(),
         },
         guild,
+        { strictMongo: options?.strictMongo !== false },
     );
 
     return {

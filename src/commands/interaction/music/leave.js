@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "leave",
@@ -15,11 +16,11 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
-        player.destroy();
+        await Promise.resolve(player.destroy());
 
         const embed = new EmbedBuilder().setColor(client.config.embedColor).setDescription(`Leaving voice channel...`);
 
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     },
 };
 

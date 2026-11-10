@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "shuffle",
@@ -20,20 +21,20 @@ module.exports = {
         if (player.queue.isEmpty) {
             embed.setDescription(`Queue is empty. Shuffle not possible.`);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         if (player.queue.length <= 1) {
             embed.setDescription(`Only one song in queue. Shuffle not possible.`);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         player.queue.shuffle();
 
         embed.setDescription(`Shuffled the queue.`);
 
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     },
 };
 

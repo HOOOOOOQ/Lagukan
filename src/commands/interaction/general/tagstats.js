@@ -1,5 +1,6 @@
 const { ApplicationCommandOptionType, EmbedBuilder, escapeMarkdown } = require("discord.js");
 const { TAG_COLORS, FOOTER_TEXT, getServerTagStatsSnapshot } = require("../../../functions/serverTagLogger.js");
+const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
 
 function formatActionBadge(action) {
     switch (action) {
@@ -42,15 +43,41 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction) => {
-        await interaction.deferReply();
+        const deferred = await safeDeferReply(interaction);
+        if (!deferred) return;
 
         const guildId = interaction.guildId;
         const guild = interaction.guild || client.guilds.cache.get(guildId);
         const targetUser = interaction.options.getUser("member");
         const botAvatar = client.user?.displayAvatarURL?.({ size: 128 }) || undefined;
+
+        if (!guild) {
+            const guildErrEmbed = new EmbedBuilder()
+                .setColor(TAG_COLORS.ERROR)
+                .setTitle("⚠️ Server Tidak Ditemukan")
+                .setDescription("Data server ini belum tersedia di cache bot. Silakan coba beberapa saat lagi.")
+                .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
+                .setTimestamp();
+
+            return safeEditReply(interaction, { embeds: [guildErrEmbed] });
+        }
+
         const guildIcon = guild.iconURL?.({ size: 128 }) || botAvatar;
 
-        const snapshot = await getServerTagStatsSnapshot(client, guild, targetUser);
+        let snapshot;
+        try {
+            snapshot = await getServerTagStatsSnapshot(client, guild, targetUser);
+        } catch (dbError) {
+            const detail = escapeInline(dbError?.message || "Gagal mengambil statistik dari database MongoDB.");
+            const errEmbed = new EmbedBuilder()
+                .setColor(TAG_COLORS.ERROR)
+                .setTitle("❌ Gagal Memuat Statistik Server Tag")
+                .setDescription(`Terjadi kendala saat membaca data statistik dari database MongoDB.\n\n• **Detail:** \`${detail}\``)
+                .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
+                .setTimestamp();
+
+            return safeEditReply(interaction, { embeds: [errEmbed] });
+        }
 
         if (targetUser && snapshot.memberDetail) {
             const { liveTag, wearsThisGuildTag, record } = snapshot.memberDetail;
@@ -123,7 +150,7 @@ module.exports = {
                 .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
                 .setTimestamp();
 
-            return interaction.editReply({ embeds: [memberEmbed] });
+            return safeEditReply(interaction, { embeds: [memberEmbed] });
         }
 
         const totalEvents = snapshot.statistics.installed + snapshot.statistics.changed + snapshot.statistics.removed;
@@ -191,7 +218,7 @@ module.exports = {
             .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
             .setTimestamp();
 
-        return interaction.editReply({ embeds: [serverEmbed] });
+        return safeEditReply(interaction, { embeds: [serverEmbed] });
     },
 };
 

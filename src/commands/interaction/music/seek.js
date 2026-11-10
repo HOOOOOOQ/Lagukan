@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "seek",
@@ -30,20 +31,23 @@ module.exports = {
         if (!player.queue.current.isSeekable) {
             embed.setDescription(`The current song is not seekable.`);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         if (time * 1000 > player.queue.current.duration) {
             embed.setDescription(`Time is greater than the duration of the song.`);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        player.seek(time * 1000);
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return;
+
+        await Promise.resolve(player.seek(time * 1000));
 
         embed.setDescription(`Seeked to: \`${time}s\``);
 
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return safeEditReply(interaction, { embeds: [embed] });
     },
 };
 

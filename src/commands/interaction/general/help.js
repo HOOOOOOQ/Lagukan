@@ -1,5 +1,7 @@
-const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { EmbedBuilder } = require("discord.js");
 const { readdirSync } = require("fs");
+const path = require("path");
+const { buildSupportComponents, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "help",
@@ -15,49 +17,47 @@ module.exports = {
         current: false,
     },
     devOnly: false,
-    run: async (client, interaction, player) => {
+    run: async (client, interaction) => {
         const botName = client.config.botName || "Lagukan";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
-        const categories = readdirSync("./src/commands/interaction/");
+        const categories = readdirSync(path.join(__dirname, ".."));
 
-        const categoryPromises = categories.map(async (category) => {
+        for (const category of categories) {
             const commands = client.slash.filter((c) => c.category === category);
+            if (!commands.size) continue;
 
-            const slashCommandData = await Promise.all(
-                commands.map(async (c) => {
-                    return `\`${c.name}\``;
-                }),
-            );
-
+            const slashCommandData = commands.map((c) => `\`${c.name}\``);
             const categoryNames = { general: "General", music: "Music", setting: "Settings" };
-            const categoryName = categoryNames[category] || null;
+            const categoryName = categoryNames[category] || category;
 
-            return embed.addFields({ name: `\`❯\`  ${toOppositeCase(categoryName)}`, value: `${slashCommandData.join(", ")}` });
-        });
+            embed.addFields({
+                name: `\`❯\`  ${toOppositeCase(categoryName)}`,
+                value: `${slashCommandData.join(", ")}`,
+            });
+        }
 
-        await Promise.all(categoryPromises);
+        const requesterLabel = interaction.member || `<@${interaction.user.id}>`;
 
         embed
             .setAuthor({ name: `${botName} Music Bot - Help`, iconURL: client.user.displayAvatarURL() })
             .setThumbnail(client.user.displayAvatarURL())
             .setDescription(
-                `Hello **${interaction.member}**, I'm **${botName}** (${client.user}) — **${botName} Music Bot**, a Rich Quality Discord Music Bot supporting Spotify, SoundCloud, Apple Music & Others. Find out what I can do using the commands below:`,
+                `Hello **${requesterLabel}**, I'm **${botName}** (${client.user}) — **${botName} Music Bot**, a Rich Quality Discord Music Bot supporting Spotify, SoundCloud, Apple Music & Others. Find out what I can do using the commands below:`,
             )
             .setFooter({
                 text: `© ${botName} Music Bot | Total Commands: ${client.slash.size}`,
-                iconURL: client.user.displayAvatarURL({ dynamic: true }),
+                iconURL: client.user.displayAvatarURL(),
             })
             .setTimestamp();
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setLabel("Support Server").setURL(client.config.supportServerUrl).setStyle(ButtonStyle.Link),
-        );
+        const components = buildSupportComponents(client, "Support Server");
 
-        return interaction.reply({ embeds: [embed], components: [row] });
+        return safeReply(interaction, { embeds: [embed], components });
     },
 };
 
 function toOppositeCase(char) {
+    if (!char) return "Commands";
     return char.charAt(0).toUpperCase() + char.slice(1).toLowerCase();
 }
 

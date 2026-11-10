@@ -1,6 +1,7 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
 const { createPage } = require("../../../functions/createPage.js");
 const { convertTime } = require("../../../functions/timeFormat.js");
+const { safeReply } = require("../../../functions/interactionResponder.js");
 const lodash = require("lodash");
 
 module.exports = {
@@ -25,13 +26,13 @@ module.exports = {
         if (player.queue.isEmpty) {
             embed.setDescription(`The queue is empty.`);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         const queueList = player.queue.map((track, index) => {
             const trackUrl = track.uri;
-            const trackTitles = formatString(track.title, 30).replace(/ - Topic$/, "") || "Unknown Title";
-            const trackArtists = formatString(track.author, 25).replace(/ - Topic$/, "") || "Unknown Author";
+            const trackTitles = formatString(track.title || "Unknown Title", 30).replace(/ - Topic$/, "") || "Unknown Title";
+            const trackArtists = formatString(track.author || "Unknown Author", 25).replace(/ - Topic$/, "") || "Unknown Author";
             const trackDuration = track.isStream ? "LIVE" : convertTime(track.duration);
 
             return `\`${index + 1}.\` **[${trackTitles} - ${trackArtists}](${trackUrl})**  •  \`${trackDuration}\``;

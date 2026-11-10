@@ -6,6 +6,11 @@ const {
     buildAdminDeniedEmbed,
     resetServerTagLogChannel,
 } = require("../../../functions/serverTagLogger.js");
+const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
+
+function escapeInline(value) {
+    return String(value ?? "").replace(/`/g, "ˋ");
+}
 
 module.exports = {
     name: "resetlogs",
@@ -24,17 +29,54 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction) => {
-        if (!hasAdminPermission(interaction.member)) {
-            const deniedEmbed = buildAdminDeniedEmbed(client, "resetlogs");
-            return interaction.reply({ embeds: [deniedEmbed], flags: [MessageFlags.Ephemeral] });
-        }
-
-        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return;
 
         const guildId = interaction.guildId;
         const guild = interaction.guild || client.guilds.cache.get(guildId);
         const botAvatar = client.user?.displayAvatarURL?.({ size: 128 }) || undefined;
-        const { wasConfigured, previousChannelId, config } = await resetServerTagLogChannel(client, guild, interaction.user.id);
+
+        if (!guild) {
+            const guildErrEmbed = new EmbedBuilder()
+                .setColor(TAG_COLORS.ERROR)
+                .setTitle("⚠️ Server Tidak Ditemukan")
+                .setDescription("Data server ini belum tersedia di cache bot. Silakan coba beberapa saat lagi.")
+                .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
+                .setTimestamp();
+
+            return safeEditReply(interaction, { embeds: [guildErrEmbed] });
+        }
+
+        if (!hasAdminPermission(interaction, guild)) {
+            const deniedEmbed = buildAdminDeniedEmbed(client, "resetlogs");
+            return safeEditReply(interaction, { embeds: [deniedEmbed] });
+        }
+
+        let resetResult;
+        try {
+            resetResult = await resetServerTagLogChannel(client, guild, interaction.user.id, {
+                strictMongo: true,
+            });
+        } catch (dbError) {
+            const detail = escapeInline(dbError?.message || "Terjadi gangguan koneksi ke database MongoDB.");
+            const mongoErrorEmbed = new EmbedBuilder()
+                .setColor(TAG_COLORS.ERROR)
+                .setTitle("❌ Gagal Mereset Konfigurasi di MongoDB")
+                .setDescription(
+                    [
+                        "Perubahan reset konfigurasi log **Server Tag** belum berhasil disimpan ke database **MongoDB**.",
+                        "",
+                        `• **Detail Kesalahan:** \`${detail}\``,
+                        "• **Saran:** Pastikan koneksi `MONGO_URI` aktif dan stabil, lalu jalankan kembali `/resetlogs`.",
+                    ].join("\n"),
+                )
+                .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
+                .setTimestamp();
+
+            return safeEditReply(interaction, { embeds: [mongoErrorEmbed] });
+        }
+
+        const { wasConfigured, previousChannelId, config } = resetResult;
 
         if (!wasConfigured) {
             const infoEmbed = new EmbedBuilder()
@@ -50,7 +92,7 @@ module.exports = {
                 .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
                 .setTimestamp();
 
-            return interaction.editReply({ embeds: [infoEmbed] });
+            return safeEditReply(interaction, { embeds: [infoEmbed] });
         }
 
         const totalRecorded =
@@ -66,7 +108,7 @@ module.exports = {
             })
             .setTitle("🗑️ Konfigurasi Log Server Berhasil Direset")
             .setDescription(
-                `Pengaturan channel log **Server Tag** untuk server **${escapeMarkdown(guild.name)}** telah dihapus dan pengiriman notifikasi dinonaktifkan tanpa memengaruhi server lain.`,
+                `Pengaturan channel log **Server Tag** untuk server **${escapeMarkdown(guild.name)}** telah dihapus di MongoDB dan pengiriman notifikasi dinonaktifkan tanpa memengaruhi server lain.`,
             )
             .addFields({
                 name: "📋 Detail Reset Server Ini",
@@ -82,7 +124,7 @@ module.exports = {
             .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
             .setTimestamp();
 
-        return interaction.editReply({ embeds: [embed] });
+        return safeEditReply(interaction, { embeds: [embed] });
     },
 };
 

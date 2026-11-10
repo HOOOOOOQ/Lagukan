@@ -1,64 +1,87 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, InteractionType, MessageFlags } = require("discord.js");
-const { createDataGuild, createDataUser } = require("../../../functions/createData.js");
+const { EmbedBuilder, InteractionType, MessageFlags } = require("discord.js");
 const { permissions } = require("../../../functions/getPermission.js");
+const { createDataGuild, createDataUser } = require("../../../functions/createData.js");
 const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
+const { buildSupportComponents, safeReply, isUnknownInteractionError } = require("../../../functions/interactionResponder.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, interaction) => {
-    if (!interaction.guild || interaction.user.bot) return;
+    if (!interaction?.guild || interaction.user?.bot) return;
 
-    await createDataGuild(client, interaction.guild);
-    await createDataUser(client, interaction.user);
+    const isSlashCommand =
+        typeof interaction.isChatInputCommand === "function"
+            ? interaction.isChatInputCommand()
+            : interaction.type === InteractionType.ApplicationCommand;
+
+    if (!isSlashCommand) return;
+
+    // Non-blocking background sync so MongoDB latency NEVER delays Discord's 3-second acknowledgement deadline
+    createDataGuild(client, interaction.guild).catch(() => {});
+    createDataUser(client, interaction.user).catch(() => {});
     handlePassiveMemberObservation(client, interaction.guild, interaction.user, interaction.member).catch(() => {});
+
+    const command = client.slash.get(interaction.commandName);
+    if (!command) return;
 
     const botName = client.config.botName || "Lagukan";
     const userData = client.data.get(`userData_${interaction.user.id}`);
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
-    const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setLabel("Support Server").setURL(client.config.supportServerUrl).setStyle(ButtonStyle.Link),
-    );
+    const supportComponents = buildSupportComponents(client, "Support Server");
 
-    if (interaction.type === InteractionType.ApplicationCommand) {
-        const command = client.slash.get(interaction.commandName);
-        if (!command) return;
+    try {
+        if (interaction.channel?.permissionsFor && interaction.guild.members?.me) {
+            const botPermissions = ["ViewChannel", "SendMessages", "EmbedLinks", "ReadMessageHistory"];
+            const botMissingPermissions = [];
 
-        Logger.info(
-            `[Slash] [${command.name}] | (${interaction.user.username})[${interaction.user.id}] | ${interaction.guild.name} [${interaction.guildId}]`,
-        );
+            for (const perm of botPermissions) {
+                if (!interaction.channel.permissionsFor(interaction.guild.members.me)?.has(perm)) {
+                    botMissingPermissions.push(perm);
+                }
+            }
 
-        const botPermissions = ["ViewChannel", "SendMessages", "EmbedLinks", "ReadMessageHistory"];
-        const botMissingPermissions = [];
+            if (botMissingPermissions.length > 0) {
+                const content = `The bot doesn't have one of these permissions \`${botMissingPermissions.join(", ")}\`.\nPlease double check them in your server role & channel settings.`;
 
-        for (const perm of botPermissions) {
-            if (!interaction.channel.permissionsFor(interaction.guild.members.me).has(perm)) botMissingPermissions.push(perm);
+                return await safeReply(interaction, {
+                    content,
+                    components: supportComponents,
+                    flags: MessageFlags.Ephemeral,
+                });
+            }
         }
 
-        if (botMissingPermissions.length > 0) {
-            const content =
-                command.locale === "id"
-                    ? `${botName} belum memiliki izin berikut di channel ini: \`${botMissingPermissions.join(", ")}\`.\nSilakan periksa kembali pengaturan role & izin channel di server ini.`
-                    : `${botName} doesn't have one of these permissions \`${botMissingPermissions.join(", ")}\`.\nPlease double check them in your server role & channel settings.`;
+        if (userData && userData.ban?.status) {
+            embed.setDescription(
+                `You have been banned from using the bot.\n\`\`\`${userData.ban.reason}\`\`\`\nPlease contact the developer if you think this is a mistake.`,
+            );
 
-            return interaction.reply({ content: content, components: [row], flags: [MessageFlags.Ephemeral] });
+            return await safeReply(interaction, {
+                embeds: [embed],
+                components: supportComponents,
+                flags: MessageFlags.Ephemeral,
+            });
         }
 
-        if (userData && userData.ban.status) {
-            embed.setDescription(`You have been banned from using ${botName}.\n\`\`\`${userData.ban.reason}\`\`\``);
+        if (client.data.get("maintenance") && !client.config.dev.includes(interaction.user.id)) {
+            embed.setDescription(
+                `${botName} is currently under maintenance. Please try again later.\nJoin our support server for more information.`,
+            );
 
-            return interaction.reply({ embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral] });
+            return await safeReply(interaction, {
+                embeds: [embed],
+                components: supportComponents,
+                flags: MessageFlags.Ephemeral,
+            });
         }
 
-        const maintenance = client.data.get("maintenance");
-
-        if (maintenance && !client.config.dev.includes(interaction.user.id)) {
-            embed.setDescription(`${botName} is currently under maintenance. Please try again later.`);
-
-            return interaction.reply({ embeds: [embed], components: [row], flags: [MessageFlags.Ephemeral] });
+        await permissions(client, interaction, command);
+    } catch (error) {
+        if (isUnknownInteractionError(error)) {
+            Logger.warn(`[Interaction] Token kedaluwarsa (10062) pada /${interaction.commandName} — interaksi dihentikan tanpa retry.`);
+            return;
         }
 
-        let player = client.rainlink.players.get(interaction.guildId);
-
-        return permissions(client, interaction, command, embed, player);
+        Logger.error(`[Interaction] Error tidak terduga pada /${interaction.commandName}:`, error);
     }
 };
 

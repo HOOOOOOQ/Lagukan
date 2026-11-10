@@ -8,6 +8,7 @@ const {
     validateLogChannel,
     setServerTagLogChannel,
 } = require("../../../functions/serverTagLogger.js");
+const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
 
 function escapeInline(value) {
     return String(value ?? "").replace(/`/g, "ˋ");
@@ -38,17 +39,40 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction) => {
-        if (!hasAdminPermission(interaction.member)) {
-            const deniedEmbed = buildAdminDeniedEmbed(client, "setlogs");
-            return interaction.reply({ embeds: [deniedEmbed], flags: [MessageFlags.Ephemeral] });
-        }
-
-        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return;
 
         const guildId = interaction.guildId;
         const guild = interaction.guild || client.guilds.cache.get(guildId);
-        const targetChannel = interaction.options.getChannel("channel");
         const botAvatar = client.user?.displayAvatarURL?.({ size: 128 }) || undefined;
+
+        if (!guild) {
+            const guildErrEmbed = new EmbedBuilder()
+                .setColor(TAG_COLORS.ERROR)
+                .setTitle("⚠️ Server Tidak Ditemukan")
+                .setDescription("Data server ini belum tersedia di cache bot. Silakan coba beberapa saat lagi.")
+                .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
+                .setTimestamp();
+
+            return safeEditReply(interaction, { embeds: [guildErrEmbed] });
+        }
+
+        if (!hasAdminPermission(interaction, guild)) {
+            const deniedEmbed = buildAdminDeniedEmbed(client, "setlogs");
+            return safeEditReply(interaction, { embeds: [deniedEmbed] });
+        }
+
+        if (!guild.members?.me && typeof guild.members?.fetchMe === "function") {
+            await guild.members.fetchMe().catch(() => null);
+        }
+
+        const rawChannel = interaction.options.getChannel("channel");
+        const targetChannel =
+            (rawChannel?.id && guild.channels?.cache?.get?.(rawChannel.id)) ||
+            (rawChannel?.id && typeof guild.channels?.fetch === "function"
+                ? await guild.channels.fetch(rawChannel.id).catch(() => null)
+                : null) ||
+            rawChannel;
 
         const validation = validateLogChannel(guild, targetChannel);
         if (!validation.valid) {
@@ -59,10 +83,34 @@ module.exports = {
                 .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
                 .setTimestamp();
 
-            return interaction.editReply({ embeds: [errorEmbed] });
+            return safeEditReply(interaction, { embeds: [errorEmbed] });
         }
 
-        const { syncedCount, detectedTag } = await setServerTagLogChannel(client, guild, targetChannel.id, interaction.user.id);
+        let saveResult;
+        try {
+            saveResult = await setServerTagLogChannel(client, guild, targetChannel.id, interaction.user.id, {
+                strictMongo: true,
+            });
+        } catch (dbError) {
+            const detail = escapeInline(dbError?.message || "Terjadi gangguan koneksi ke database MongoDB.");
+            const mongoErrorEmbed = new EmbedBuilder()
+                .setColor(TAG_COLORS.ERROR)
+                .setTitle("❌ Gagal Menyimpan Konfigurasi ke MongoDB")
+                .setDescription(
+                    [
+                        "Pengaturan channel log **Server Tag** belum berhasil disimpan ke database **MongoDB**.",
+                        "",
+                        `• **Detail Kesalahan:** \`${detail}\``,
+                        "• **Saran:** Pastikan variabel `MONGO_URI` aktif dan koneksi database stabil, lalu jalankan kembali `/setlogs`.",
+                    ].join("\n"),
+                )
+                .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
+                .setTimestamp();
+
+            return safeEditReply(interaction, { embeds: [mongoErrorEmbed] });
+        }
+
+        const { syncedCount, detectedTag } = saveResult;
         const realTimeIntent = hasServerMembersIntent(client);
         const tagInfo = detectedTag
             ? `\`[${escapeInline(detectedTag)}]\` *(terdeteksi otomatis)*`
@@ -71,7 +119,7 @@ module.exports = {
         const detailLines = [
             `• **Server:** **${escapeMarkdown(guild.name)}** (\`${guildId}\`)`,
             `• **Server Tag:** ${tagInfo}`,
-            `• **Status Fitur:** 🟢 Aktif`,
+            `• **Status Fitur:** 🟢 Aktif (Tersimpan di MongoDB)`,
             `• **Channel Log:** <#${targetChannel.id}> (\`${targetChannel.id}\`)`,
             `• **Diatur Oleh:** <@${interaction.user.id}>`,
             `• **Izin Bot:** ✅ \`ViewChannel\`, \`SendMessages\`, \`EmbedLinks\``,
@@ -91,7 +139,7 @@ module.exports = {
             })
             .setTitle("✅ Channel Server Tag Logger Berhasil Diatur")
             .setDescription(
-                `Konfigurasi log **Server Tag** khusus untuk server **${escapeMarkdown(guild.name)}** berhasil disimpan. Seluruh aktivitas pemasangan, penggantian, dan penghapusan tag server ini akan dikirim ke <#${targetChannel.id}>.`,
+                `Konfigurasi log **Server Tag** khusus untuk server **${escapeMarkdown(guild.name)}** berhasil disimpan ke MongoDB. Seluruh aktivitas pemasangan, penggantian, dan penghapusan tag server ini akan dikirim ke <#${targetChannel.id}>.`,
             )
             .addFields({
                 name: "⚙️ Konfigurasi Server Ini",
@@ -101,7 +149,7 @@ module.exports = {
             .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
             .setTimestamp();
 
-        return interaction.editReply({ embeds: [successEmbed] });
+        return safeEditReply(interaction, { embeds: [successEmbed] });
     },
 };
 

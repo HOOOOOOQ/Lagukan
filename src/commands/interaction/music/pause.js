@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "pause",
@@ -20,14 +21,14 @@ module.exports = {
         if (player.paused) {
             embed.setDescription(`Already paused.`);
 
-            return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        player.pause();
+        await Promise.resolve(player.pause());
 
         embed.setDescription(`Paused the current song.`);
 
-        return interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     },
 };
 

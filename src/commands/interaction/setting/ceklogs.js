@@ -6,6 +6,7 @@ const {
     validateLogChannel,
     getServerTagStatsSnapshot,
 } = require("../../../functions/serverTagLogger.js");
+const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
 
 function escapeInline(value) {
     return String(value ?? "").replace(/`/g, "ˋ");
@@ -28,12 +29,39 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction) => {
-        await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return;
 
         const guildId = interaction.guildId;
         const guild = interaction.guild || client.guilds.cache.get(guildId);
         const botAvatar = client.user?.displayAvatarURL?.({ size: 128 }) || undefined;
-        const snapshot = await getServerTagStatsSnapshot(client, guild);
+
+        if (!guild) {
+            const guildErrEmbed = new EmbedBuilder()
+                .setColor(TAG_COLORS.ERROR)
+                .setTitle("⚠️ Server Tidak Ditemukan")
+                .setDescription("Data server ini belum tersedia di cache bot. Silakan coba beberapa saat lagi.")
+                .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
+                .setTimestamp();
+
+            return safeEditReply(interaction, { embeds: [guildErrEmbed] });
+        }
+
+        let snapshot;
+        try {
+            snapshot = await getServerTagStatsSnapshot(client, guild);
+        } catch (dbError) {
+            const detail = escapeInline(dbError?.message || "Gagal membaca konfigurasi dari database MongoDB.");
+            const errEmbed = new EmbedBuilder()
+                .setColor(TAG_COLORS.ERROR)
+                .setTitle("❌ Gagal Membaca Konfigurasi Log")
+                .setDescription(`Terjadi kendala saat mengambil status konfigurasi dari database MongoDB.\n\n• **Detail:** \`${detail}\``)
+                .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
+                .setTimestamp();
+
+            return safeEditReply(interaction, { embeds: [errEmbed] });
+        }
+
         const realTimeIntent = hasServerMembersIntent(client);
 
         let channelDisplay = "`Belum diatur` *(gunakan `/setlogs` untuk mengaktifkan)*";
@@ -41,6 +69,10 @@ module.exports = {
         let embedColor = snapshot.enabled ? TAG_COLORS.INFO : TAG_COLORS.REMOVED;
 
         if (snapshot.logChannelId) {
+            if (!guild.members?.me && typeof guild.members?.fetchMe === "function") {
+                await guild.members.fetchMe().catch(() => null);
+            }
+
             const targetChannel =
                 guild.channels?.cache?.get?.(snapshot.logChannelId) ||
                 (typeof guild.channels?.fetch === "function" ? await guild.channels.fetch(snapshot.logChannelId).catch(() => null) : null);
@@ -121,7 +153,7 @@ module.exports = {
             .setFooter({ text: FOOTER_TEXT, iconURL: botAvatar })
             .setTimestamp();
 
-        return interaction.editReply({ embeds: [embed] });
+        return safeEditReply(interaction, { embeds: [embed] });
     },
 };
 
