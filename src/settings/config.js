@@ -21,6 +21,9 @@ module.exports = {
         enabled: parseBoolean(process.env.VOICE_LOG_ENABLED, true),
     },
 
+    // SERVER TAG LOGGER GATEWAY INTENT (Enable SERVER MEMBERS INTENT in Discord Developer Portal)
+    serverMembersIntent: parseBoolean(process.env.SERVER_MEMBERS_INTENT, true),
+
     // RAINLINK DETAILS
     lavalinkSource: process.env.LAVALINK_SOURCE || "sp", // Available Lavalink sources, based on the sources you've enabled in your Lavalink configuration. For example, if you enable the Spotify source, then "sp" will refer to "spsearch". Will be used if "sourceID" option is provided in the play command.
     rainlinkOptions: {

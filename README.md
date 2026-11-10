@@ -75,6 +75,7 @@ npm start
 - ☑️ MongoDB-backed guild/user state with periodic sync
 - ☑️ Lyrics lookup for current song (`/lyric`)
 - ☑️ Voice Channel Activity Logger (`Joined` & `Leaving` directly in active Voice Channel Text Chat) with per-guild settings (`/voicelog`)
+- ☑️ Server Tag Logger (`LAGUKAN • SERVER TAG LOGGER`) in Bahasa Indonesia with MongoDB statistics (`/setlogs`, `/ceklogs`, `/resetlogs`, `/tagstats`)
 - ☑️ Auto-leave timeout when inactive/alone (configurable)
 
 ## `📌` Requirements
@@ -89,9 +90,9 @@ npm start
 
 | Group | Commands |
 | --- | --- |
-| General | `/help`, `/ping` |
+| General | `/help`, `/ping`, `/tagstats` |
 | Music | `/play`, `/queue`, `/skip`, `/previous`, `/pause`, `/resume`, `/stop`, `/seek`, `/remove`, `/clear`, `/shuffle`, `/loop`, `/filter`, `/volume`, `/join`, `/leave`, `/lyric` |
-| Settings | `/247`, `/autoplay`, `/voicelog` |
+| Settings | `/247`, `/autoplay`, `/voicelog`, `/setlogs`, `/ceklogs`, `/resetlogs` |
 
 ### Prefix Commands (Developer / Ops)
 
@@ -125,6 +126,12 @@ Create a `.env` file from `.env.example`.
 | ------------------- | -------------- | ---------------------------------------------------------------------------------- |
 | `VOICE_LOG_ENABLED` | `true`         | Enable/disable Voice Activity Logger in active Voice Channel Chat (`true`/`false`) |
 | `TIMEZONE`          | `Asia/Jakarta` | Timezone for voice log timestamps (e.g. WIB)                                       |
+
+### Server Tag Logger
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `SERVER_MEMBERS_INTENT` | `true` | Enables `GuildMembers` Gateway intent for real-time `User.primaryGuild` Server Tag detection via `/setlogs` |
 
 ### Lavalink Connection
 

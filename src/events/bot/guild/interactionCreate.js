@@ -1,6 +1,7 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, InteractionType, MessageFlags } = require("discord.js");
 const { createDataGuild, createDataUser } = require("../../../functions/createData.js");
 const { permissions } = require("../../../functions/getPermission.js");
+const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, interaction) => {
@@ -8,6 +9,7 @@ module.exports = async (client, interaction) => {
 
     await createDataGuild(client, interaction.guild);
     await createDataUser(client, interaction.user);
+    handlePassiveMemberObservation(client, interaction.guild, interaction.user, interaction.member).catch(() => {});
 
     const botName = client.config.botName || "Lagukan";
     const userData = client.data.get(`userData_${interaction.user.id}`);
@@ -32,7 +34,10 @@ module.exports = async (client, interaction) => {
         }
 
         if (botMissingPermissions.length > 0) {
-            const content = `${botName} doesn't have one of these permissions \`${botMissingPermissions.join(", ")}\`.\nPlease double check them in your server role & channel settings.`;
+            const content =
+                command.locale === "id"
+                    ? `${botName} belum memiliki izin berikut di channel ini: \`${botMissingPermissions.join(", ")}\`.\nSilakan periksa kembali pengaturan role & izin channel di server ini.`
+                    : `${botName} doesn't have one of these permissions \`${botMissingPermissions.join(", ")}\`.\nPlease double check them in your server role & channel settings.`;
 
             return interaction.reply({ content: content, components: [row], flags: [MessageFlags.Ephemeral] });
         }

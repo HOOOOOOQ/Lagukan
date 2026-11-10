@@ -1,6 +1,7 @@
 const { ActivityType } = require("discord.js");
 const emojiConfig = require("../../../settings/emoji.js");
 const { normalizeGuildData } = require("../../../functions/createData.js");
+const { initializeServerTagLogger } = require("../../../functions/serverTagLogger.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client) => {
@@ -48,6 +49,10 @@ module.exports = async (client) => {
         const { _id, __v, ...data } = x.toObject();
 
         client.data.set(`userData_${x.id}`, data);
+    });
+
+    initializeServerTagLogger(client).catch((err) => {
+        Logger.debug(`Server Tag Logger initial baseline skipped: ${err.message}`);
     });
 
     setInterval(async () => {
