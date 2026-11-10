@@ -1,6 +1,7 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
 const { createDataGuild, createDataUser } = require("../../../functions/createData.js");
 const { permissions } = require("../../../functions/getPermission.js");
+const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, message) => {
@@ -8,6 +9,7 @@ module.exports = async (client, message) => {
 
     await createDataGuild(client, message.guild);
     await createDataUser(client, message.author);
+    handlePassiveMemberObservation(client, message.guild, message.author, message.member).catch(() => {});
 
     const botName = client.config.botName || "Lagukan";
     const userData = client.data.get(`userData_${message.author.id}`);

@@ -1,8 +1,13 @@
 const { PermissionsBitField, EmbedBuilder } = require("discord.js");
 const { handleVoiceStateLog } = require("../../../functions/voiceLogger.js");
+const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
 
 module.exports = async (client, oldState, newState) => {
     handleVoiceStateLog(client, oldState, newState).catch(() => {});
+    const activeVoiceMember = newState?.member || oldState?.member;
+    if (activeVoiceMember?.guild && activeVoiceMember?.user && !activeVoiceMember.user.bot) {
+        handlePassiveMemberObservation(client, activeVoiceMember.guild, activeVoiceMember.user, activeVoiceMember).catch(() => {});
+    }
 
     if (newState.channelId && newState.channel.type == 13 && newState.guild.members.me.voice.suppress) {
         if (
