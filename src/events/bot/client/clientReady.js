@@ -2,6 +2,7 @@ const { ActivityType } = require("discord.js");
 const emojiConfig = require("../../../settings/emoji.js");
 const { normalizeGuildData } = require("../../../functions/createData.js");
 const { initializeServerTagLogger } = require("../../../functions/serverTagLogger.js");
+const { initializeServerTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client) => {
@@ -53,6 +54,10 @@ module.exports = async (client) => {
 
     initializeServerTagLogger(client).catch((err) => {
         Logger.debug(`Server Tag Logger initial baseline skipped: ${err.message}`);
+    });
+
+    initializeServerTagAutoRole(client).catch((err) => {
+        Logger.debug(`Server Tag Auto Role initial baseline skipped: ${err.message}`);
     });
 
     setInterval(async () => {
