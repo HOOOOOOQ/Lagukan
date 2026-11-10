@@ -56,8 +56,43 @@ class LagukanClient extends Client {
         this.cluster = new ClusterClient(this);
     }
 
+    async _fallbackWithoutGuildMembersIntent(loginToken) {
+        if (this.serverMembersIntentFallback || !this.options.intents.has(GatewayIntentBits.GuildMembers)) {
+            return null;
+        }
+
+        this.serverMembersIntentFallback = true;
+        Logger.warn(
+            "SERVER MEMBERS INTENT belum diaktifkan di Discord Developer Portal! Menyambung ulang otomatis dalam mode kompatibilitas (aktifkan SERVER MEMBERS INTENT agar deteksi Server Tag berjalan real-time).",
+        );
+
+        this.options.intents.remove(GatewayIntentBits.GuildMembers);
+        await this.ws.destroy().catch(() => {});
+        this.ws.destroyed = false;
+        this.ws._ws = null;
+        this.ws.shards.clear();
+        this.token = loginToken;
+
+        return super.login(loginToken);
+    }
+
     async connect() {
         const loginToken = this.token || this.config.token;
+
+        if (!this._intentFallbackListenerAttached) {
+            this._intentFallbackListenerAttached = true;
+
+            this.on("shardDisconnect", (event) => {
+                if (event?.code === 4014 && !this.serverMembersIntentFallback && this.options.intents.has(GatewayIntentBits.GuildMembers)) {
+                    this._fallbackWithoutGuildMembersIntent(loginToken).catch((retryErr) => {
+                        Logger.error(
+                            "Disallowed Intents detected! Please enable MESSAGE CONTENT INTENT and SERVER MEMBERS INTENT in Discord Developer Portal.",
+                            retryErr,
+                        );
+                    });
+                }
+            });
+        }
 
         try {
             return await super.login(loginToken);
@@ -65,19 +100,8 @@ class LagukanClient extends Client {
             const errMsg = String(error?.message || error);
 
             if (errMsg.includes("Used disallowed intents") && this.options.intents.has(GatewayIntentBits.GuildMembers)) {
-                Logger.warn(
-                    "SERVER MEMBERS INTENT belum diaktifkan di Discord Developer Portal! Login ulang dalam mode kompatibilitas (aktifkan SERVER MEMBERS INTENT agar deteksi Server Tag berjalan real-time).",
-                );
-
-                this.options.intents.remove(GatewayIntentBits.GuildMembers);
-                this.serverMembersIntentFallback = true;
-                this.ws.destroyed = false;
-                this.ws._ws = null;
-                this.ws.shards.clear();
-                this.token = loginToken;
-
                 try {
-                    return await super.login(loginToken);
+                    return await this._fallbackWithoutGuildMembersIntent(loginToken);
                 } catch (retryError) {
                     if (String(retryError?.message || retryError).includes("Used disallowed intents")) {
                         Logger.error(
