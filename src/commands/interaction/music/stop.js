@@ -18,12 +18,15 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
+        player._manualStopAt = Date.now();
         await cleanupNowPlayingMessage(player, true);
         player.queue.clear();
         player.data?.set?.("shuffled", false);
         await Promise.resolve(player.stop());
 
-        const embed = new EmbedBuilder().setColor(client.config.embedColor).setDescription("Stopped the music player.");
+        const embed = new EmbedBuilder()
+            .setColor(client.config.embedColor)
+            .setDescription("Stopped the music player and cleared the queue.");
 
         return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     },

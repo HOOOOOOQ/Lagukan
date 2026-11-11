@@ -20,7 +20,14 @@ module.exports = async (client, player, track, message) => {
     }
 
     const guild = client.guilds.cache.get(player.guildId);
-    Logger.error(`Song resolve error from ${guild?.name || "Unknown"} (${player.guildId}):`, message);
+    Logger.music("error", `Track resolve error in ${guild?.name || "Unknown"}`, {
+        guildId: player.guildId,
+        userId: track?.requester?.id,
+        command: "trackResolveError",
+        playerStatus: `playing=${player.playing},queue=${player.queue?.size || 0}`,
+        nodeStatus: player.node?.options?.name || "Lavalink",
+        errorMessage: message || "Track load/resolve failed",
+    });
 
     await cleanupNowPlayingMessage(player, true);
 

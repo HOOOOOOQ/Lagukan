@@ -1,13 +1,14 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, StringSelectMenuBuilder } = require("discord.js");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, StringSelectMenuBuilder } = require("discord.js");
 const { convertTime } = require("./timeFormat.js");
 const { formatTrackSourceLabel, enqueueTracksStaged } = require("./musicSourceResolver.js");
-const { getOrCreateGuildPlayer } = require("./musicPermissions.js");
-const { refreshNowPlayingDashboard, truncateText } = require("./nowPlayingManager.js");
+const { getOrCreateGuildPlayer, isPlayerActivelyPlayingOrPausedTrack, startPlayerIfIdle } = require("./musicPermissions.js");
+const { refreshNowPlayingDashboard, ensureNowPlayingDashboardVisible, truncateText } = require("./nowPlayingManager.js");
 const { safeEditReply, safeDeferUpdate, safeReply } = require("./interactionResponder.js");
-const { MessageFlags } = require("discord.js");
+const Logger = require("../utils/logger");
 
 async function enqueueSingleTrackAndRespond(client, interaction, track) {
     const embedColor = client.config.embedColor;
+    const botName = client.config.botName || "Lagukan";
     const voiceChannel = interaction.member?.voice?.channel;
 
     if (!voiceChannel) {
@@ -15,11 +16,27 @@ async function enqueueSingleTrackAndRespond(client, interaction, track) {
         return safeEditReply(interaction, { embeds: [noVcEmbed], components: [] });
     }
 
-    const player = await getOrCreateGuildPlayer(client, {
-        guild: interaction.guild,
-        voiceChannelId: voiceChannel.id,
-        textChannelId: interaction.channelId,
-    });
+    let player;
+    try {
+        player = await getOrCreateGuildPlayer(client, {
+            guild: interaction.guild,
+            voiceChannelId: voiceChannel.id,
+            textChannelId: interaction.channelId,
+        });
+    } catch (err) {
+        Logger.music("error", "Failed to create or join voice player", {
+            guildId: interaction.guildId,
+            userId: interaction.user?.id,
+            command: "play",
+            playerStatus: "voice_connect_failed",
+            errorMessage: err,
+        });
+        const connErrEmbed = new EmbedBuilder()
+            .setColor(0xff4757)
+            .setAuthor({ name: `${botName} • Voice Connection Error`, iconURL: client.user?.displayAvatarURL?.() })
+            .setDescription(`❌ ${err?.message || "Could not establish voice connection right now."}`);
+        return safeEditReply(interaction, { embeds: [connErrEmbed], components: [] });
+    }
 
     if (player.voiceId && player.voiceId !== voiceChannel.id) {
         const diffVcEmbed = new EmbedBuilder()
@@ -28,47 +45,120 @@ async function enqueueSingleTrackAndRespond(client, interaction, track) {
         return safeEditReply(interaction, { embeds: [diffVcEmbed], components: [] });
     }
 
-    const wasPlaying = Boolean(player.playing || (player.paused && player.queue.current));
+    const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
     player.queue.add(track);
-
-    if (!player.playing && !player.paused) {
-        await Promise.resolve(player.play());
-    } else if (wasPlaying) {
-        await refreshNowPlayingDashboard(client, player).catch(() => {});
-    }
 
     const dur = track.isStream ? "LIVE" : convertTime(track.duration || 0);
     const sourceLabel = formatTrackSourceLabel(track);
     const displayUrl = track.pluginInfo?.originalUri || track.uri;
     const title = truncateText(track.title || "Unknown Title", 60);
     const artist = truncateText(track.author || "Unknown Artist", 45);
+    const titleLine = displayUrl ? `**[${title}](${displayUrl})**` : `**${title}**`;
 
-    const addedEmbed = new EmbedBuilder()
+    // Track queued while another track is already active -> update dashboard & reply "Added to Queue"
+    if (wasPlaying) {
+        await refreshNowPlayingDashboard(client, player).catch(() => {});
+
+        const queuedEmbed = new EmbedBuilder()
+            .setColor(embedColor)
+            .setAuthor({
+                name: "Added to Queue",
+                iconURL: client.user?.displayAvatarURL?.(),
+            })
+            .setDescription(`${titleLine}\nby **${artist}**`)
+            .addFields(
+                { name: "Duration", value: `\`${dur}\``, inline: true },
+                { name: "Source", value: `\`${sourceLabel}\``, inline: true },
+                { name: "Queue Position", value: `\`#${player.queue.size}\``, inline: true },
+            );
+
+        if (track.artworkUrl && /^https?:\/\//i.test(String(track.artworkUrl))) {
+            queuedEmbed.setThumbnail(track.artworkUrl);
+        }
+
+        return safeEditReply(interaction, { embeds: [queuedEmbed], components: [] });
+    }
+
+    // Player was idle -> show temporary "Loading Track..." ONLY while starting playback on Lavalink
+    const loadingEmbed = new EmbedBuilder()
         .setColor(embedColor)
         .setAuthor({
-            name: wasPlaying ? "Added to Queue" : "Loading Track",
+            name: "⏳ Loading Track...",
             iconURL: client.user?.displayAvatarURL?.(),
         })
-        .setDescription(`${displayUrl ? `**[${title}](${displayUrl})**` : `**${title}**`}\nby **${artist}**`)
+        .setDescription(`Preparing audio stream for ${titleLine}\nby **${artist}**...`);
+
+    if (track.artworkUrl && /^https?:\/\//i.test(String(track.artworkUrl))) {
+        loadingEmbed.setThumbnail(track.artworkUrl);
+    }
+
+    await safeEditReply(interaction, { embeds: [loadingEmbed], components: [] });
+
+    const outcome = await startPlayerIfIdle(client, player, {
+        guild: interaction.guild,
+        userId: interaction.user?.id,
+        command: "play",
+        waitForTrackStart: true,
+        timeoutMs: 9000,
+    });
+
+    if (!outcome.ok) {
+        const failEmbed = new EmbedBuilder()
+            .setColor(0xff4757)
+            .setAuthor({
+                name: `${botName} • Playback Failed`,
+                iconURL: client.user?.displayAvatarURL?.(),
+            })
+            .setDescription(
+                `❌ Could not play ${titleLine}.\n\n**Reason:** ${outcome.error || "Audio stream failed to initialize on Lavalink."}`,
+            );
+        return safeEditReply(interaction, { embeds: [failEmbed], components: [] });
+    }
+
+    const activeTrack = outcome.track || player.queue?.current || track;
+    const dashboardMsg = await ensureNowPlayingDashboardVisible(client, player, activeTrack);
+    const warningNote = Array.isArray(outcome.warnings) && outcome.warnings.length > 0 ? `\n\n⚠️ ${outcome.warnings.join("\n⚠️ ")}` : "";
+
+    // If the live Now Playing Dashboard is visible in the same channel and there are no special warnings,
+    // remove the temporary "Loading Track..." reply cleanly; otherwise replace it with "Started Playing".
+    if (
+        dashboardMsg &&
+        String(player.textId) === String(interaction.channelId) &&
+        !warningNote &&
+        typeof interaction.deleteReply === "function"
+    ) {
+        const deleted = await interaction
+            .deleteReply()
+            .then(() => true)
+            .catch(() => false);
+        if (deleted) {
+            return dashboardMsg;
+        }
+    }
+
+    const startedEmbed = new EmbedBuilder()
+        .setColor(embedColor)
+        .setAuthor({
+            name: "▶️ Started Playing",
+            iconURL: client.user?.displayAvatarURL?.(),
+        })
+        .setDescription(`${titleLine}\nby **${artist}**${warningNote}`)
         .addFields(
             { name: "Duration", value: `\`${dur}\``, inline: true },
             { name: "Source", value: `\`${sourceLabel}\``, inline: true },
-            {
-                name: "Queue Position",
-                value: wasPlaying ? `\`#${player.queue.size}\`` : "`Now Playing`",
-                inline: true,
-            },
+            { name: "Voice Channel", value: `<#${player.voiceId || voiceChannel.id}>`, inline: true },
         );
 
     if (track.artworkUrl && /^https?:\/\//i.test(String(track.artworkUrl))) {
-        addedEmbed.setThumbnail(track.artworkUrl);
+        startedEmbed.setThumbnail(track.artworkUrl);
     }
 
-    return safeEditReply(interaction, { embeds: [addedEmbed], components: [] });
+    return safeEditReply(interaction, { embeds: [startedEmbed], components: [] });
 }
 
 async function enqueuePlaylistAndRespond(client, interaction, searchResult) {
     const embedColor = client.config.embedColor;
+    const botName = client.config.botName || "Lagukan";
     const voiceChannel = interaction.member?.voice?.channel;
 
     if (!voiceChannel) {
@@ -76,11 +166,20 @@ async function enqueuePlaylistAndRespond(client, interaction, searchResult) {
         return safeEditReply(interaction, { embeds: [noVcEmbed], components: [] });
     }
 
-    const player = await getOrCreateGuildPlayer(client, {
-        guild: interaction.guild,
-        voiceChannelId: voiceChannel.id,
-        textChannelId: interaction.channelId,
-    });
+    let player;
+    try {
+        player = await getOrCreateGuildPlayer(client, {
+            guild: interaction.guild,
+            voiceChannelId: voiceChannel.id,
+            textChannelId: interaction.channelId,
+        });
+    } catch (err) {
+        const connErrEmbed = new EmbedBuilder()
+            .setColor(0xff4757)
+            .setAuthor({ name: `${botName} • Voice Connection Error`, iconURL: client.user?.displayAvatarURL?.() })
+            .setDescription(`❌ ${err?.message || "Could not establish voice connection right now."}`);
+        return safeEditReply(interaction, { embeds: [connErrEmbed], components: [] });
+    }
 
     if (player.voiceId && player.voiceId !== voiceChannel.id) {
         const diffVcEmbed = new EmbedBuilder()
@@ -89,10 +188,27 @@ async function enqueuePlaylistAndRespond(client, interaction, searchResult) {
         return safeEditReply(interaction, { embeds: [diffVcEmbed], components: [] });
     }
 
+    const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
     const staged = enqueueTracksStaged(client, player, searchResult.tracks, { chunkSize: 50 });
 
-    if (!player.playing && !player.paused) {
-        await Promise.resolve(player.play());
+    if (!wasPlaying) {
+        const outcome = await startPlayerIfIdle(client, player, {
+            guild: interaction.guild,
+            userId: interaction.user?.id,
+            command: "play_playlist",
+            waitForTrackStart: true,
+            timeoutMs: 9000,
+        });
+
+        if (!outcome.ok) {
+            const failEmbed = new EmbedBuilder()
+                .setColor(0xff4757)
+                .setAuthor({ name: `${botName} • Playback Failed`, iconURL: client.user?.displayAvatarURL?.() })
+                .setDescription(`❌ Could not start playlist playback.\n\n**Reason:** ${outcome.error || "Unknown error"}`);
+            return safeEditReply(interaction, { embeds: [failEmbed], components: [] });
+        }
+
+        await ensureNowPlayingDashboardVisible(client, player, outcome.track || searchResult.tracks[0]);
     } else {
         await refreshNowPlayingDashboard(client, player).catch(() => {});
     }

@@ -19,9 +19,14 @@ class LagukanClient extends Client {
             intents.push(GatewayIntentBits.GuildMembers);
         }
 
-        super({
-            shards: getInfo().SHARD_LIST,
-            shardCount: getInfo().TOTAL_SHARDS,
+        let shardInfo = null;
+        try {
+            shardInfo = getInfo();
+        } catch {
+            shardInfo = null;
+        }
+
+        const clientOptions = {
             failIfNotExists: true,
             allowedMentions: {
                 parse: ["roles", "users", "everyone"],
@@ -29,7 +34,14 @@ class LagukanClient extends Client {
             },
             intents,
             partials: [Partials.User, Partials.GuildMember, Partials.Message, Partials.Channel, Partials.Reaction],
-        });
+        };
+
+        if (shardInfo) {
+            clientOptions.shards = shardInfo.SHARD_LIST;
+            clientOptions.shardCount = shardInfo.TOTAL_SHARDS;
+        }
+
+        super(clientOptions);
 
         this.config = config;
         this.guildData = require("../databases/schema/guild.js");
@@ -63,7 +75,7 @@ class LagukanClient extends Client {
 
         attachAutoRoleGatewayListener(this);
 
-        this.cluster = new ClusterClient(this);
+        this.cluster = shardInfo ? new ClusterClient(this) : null;
     }
 
     async _fallbackWithoutGuildMembersIntent(loginToken) {

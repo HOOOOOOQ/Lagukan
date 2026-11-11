@@ -697,7 +697,8 @@ async function fetchSpotifyViaPublicMetadata(entityType, entityId) {
                 if (entity) {
                     const cover = entity.visualIdentity?.image?.[0]?.url || entity.coverArt?.sources?.[0]?.url || null;
 
-                    if (entityType === "track" && entity.title) {
+                    const trackTitle = entity.title || entity.name;
+                    if (entityType === "track" && trackTitle) {
                         const artists = Array.isArray(entity.artists)
                             ? entity.artists
                                   .map((a) => a?.name)
@@ -711,7 +712,7 @@ async function fetchSpotifyViaPublicMetadata(entityType, entityId) {
                             tracks: [
                                 {
                                     identifier: entity.id || entityId,
-                                    title: entity.title,
+                                    title: trackTitle,
                                     author: artists || "Unknown",
                                     duration: Number(entity.duration || 0),
                                     uri: canonicalUrl,

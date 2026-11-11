@@ -1,13 +1,30 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags } = require("discord.js");
+const {
+    ActionRowBuilder,
+    ButtonBuilder,
+    ButtonStyle,
+    EmbedBuilder,
+    MessageFlags,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+} = require("discord.js");
 const { convertTime } = require("./timeFormat.js");
-const { formatTrackSourceLabel } = require("./musicSourceResolver.js");
-const { checkDjAccess, isGuildAutoplayEnabled, addUserFavorite } = require("./musicPermissions.js");
+const { formatTrackSourceLabel, hydrateStoredTrack } = require("./musicSourceResolver.js");
+const {
+    checkDjAccess,
+    isGuildAutoplayEnabled,
+    setGuildAutoplay,
+    addUserFavorite,
+    getGuildTrackHistory,
+    ensureGuildDataSync,
+} = require("./musicPermissions.js");
+const { handleLyricsCommand } = require("./lyricsProvider.js");
 const { safeReply, safeDeferUpdate, safeEditReply } = require("./interactionResponder.js");
 const { PLAYER_STATE_DESTROYED, getGuildPlayer } = require("./voiceSessionManager.js");
 const Logger = require("../utils/logger");
 
 const PROGRESS_BAR_SEGMENTS = 14;
-const PROGRESS_UPDATE_THROTTLE_MS = 20000;
+const PROGRESS_UPDATE_THROTTLE_MS = 15000;
 
 function truncateText(text, maxLen = 48) {
     const clean = String(text || "Unknown")
@@ -40,6 +57,21 @@ function formatRepeatLabel(loopMode) {
     return "Off";
 }
 
+function hasAnyPreviousTrack(client, player) {
+    if (!player) return false;
+    if (Array.isArray(player.queue?.previous) && player.queue.previous.length > 0) {
+        return true;
+    }
+    const guildData = ensureGuildDataSync(client, player.guildId);
+    const history = Array.isArray(guildData?.history) ? guildData.history : [];
+    return player.queue?.current ? history.length > 1 : history.length > 0;
+}
+
+/**
+ * Builds the complete Now Playing Dashboard embed displaying all 14 required state metrics:
+ * Thumbnail, Title, Artist/Channel, Total Duration, Progress Bar, Elapsed Time, Remaining Time,
+ * Music Source, Requester, Queue Count, Playback Status, Repeat Status, Shuffle Status, Autoplay Status.
+ */
 function buildNowPlayingEmbed(client, player, trackOverride = null) {
     const botName = client?.config?.botName || "Lagukan";
     const embedColor = client?.config?.embedColor || "#ff0051";
@@ -53,41 +85,57 @@ function buildNowPlayingEmbed(client, player, trackOverride = null) {
     const title = truncateText(track.title || "Unknown Title", 58);
     const author = truncateText(track.author || "Unknown Artist", 42);
     const displayUrl = track.pluginInfo?.originalUri || track.uri || null;
-    const durationText = track.isStream ? "LIVE" : convertTime(track.duration || 0);
-    const progressLine = buildProgressBar(player.position || 0, track.duration || 0, Boolean(track.isStream));
+    const isStream = Boolean(track.isStream);
+    const totalDurationMs = Math.max(0, Number(track.duration || 0));
+    const elapsedMs = isStream
+        ? Math.max(0, Number(player.position || 0))
+        : Math.max(0, Math.min(Number(player.position || 0), totalDurationMs));
+    const remainingMs = isStream ? 0 : Math.max(0, totalDurationMs - elapsedMs);
+
+    const durationText = isStream ? "LIVE" : convertTime(totalDurationMs);
+    const elapsedText = convertTime(elapsedMs);
+    const remainingText = isStream ? "LIVE" : `-${convertTime(remainingMs)}`;
+    const progressLine = buildProgressBar(elapsedMs, totalDurationMs, isStream);
+
     const sourceLabel = formatTrackSourceLabel(track);
     const requesterLabel = track.requester ? (track.requester.id ? `<@${track.requester.id}>` : String(track.requester)) : "Autoplay";
 
     const queueCount = Number(player.queue?.size || 0);
     const queueDurationMs = Number(player.queue?.duration || 0);
-    const queueSummary = queueCount > 0 ? `\`${queueCount}\` track(s) • \`${convertTime(queueDurationMs)}\`` : "`Empty`";
+    const queueSummary = queueCount > 0 ? `\`${queueCount}\` track(s) • \`${convertTime(queueDurationMs)}\`` : "`0` track(s)";
 
+    const isPaused = Boolean(player.paused && !player.playing) || Boolean(player.paused);
     const isShuffled = Boolean(player.data?.get?.("shuffled"));
     const repeatLabel = formatRepeatLabel(player.loop);
     const autoplayEnabled = isGuildAutoplayEnabled(client, player.guildId);
     const activeFilter = player.data?.get?.("activeFilter") || null;
+    const isServerMuted = Boolean(player.data?.get?.("serverMuted"));
+
+    const playbackStateLabel = isPaused ? "⏸️ Paused" : "▶️ Playing";
+    const playbackSummary = `\`${playbackStateLabel}\` • Vol \`${player.volume ?? 100}%\`${activeFilter ? ` • \`${activeFilter}\`` : ""}`;
 
     const titleLine = displayUrl ? `**[${title}](${displayUrl})**` : `**${title}**`;
+    const serverMuteAlert = isServerMuted
+        ? "\n⚠️ **Bot sedang di-Server Mute di Discord!** Lepas *Server Mute* pada bot agar suara terdengar."
+        : "";
 
     const embed = new EmbedBuilder()
         .setAuthor({
-            name: player.paused ? `${botName} • Playback Paused` : `${botName} • Now Playing`,
+            name: isPaused ? `${botName} • Playback Paused` : `${botName} • Now Playing`,
             iconURL: iconUrl,
         })
         .setColor(embedColor)
-        .setDescription(`${titleLine}\nby **${author}**\n\n${progressLine}`)
+        .setDescription(`${titleLine}\n👤 **Artist:** ${author}\n\n${progressLine}${serverMuteAlert}`)
         .addFields(
             { name: "Source", value: `\`${sourceLabel}\``, inline: true },
             { name: "Duration", value: `\`${durationText}\``, inline: true },
+            { name: "Elapsed / Remaining", value: `\`${elapsedText}\` / \`${remainingText}\``, inline: true },
             { name: "Requested By", value: requesterLabel, inline: true },
             { name: "Queue", value: queueSummary, inline: true },
-            { name: "Shuffle", value: isShuffled ? "`🔀 Active`" : "`Off`", inline: true },
+            { name: "Playback", value: playbackSummary, inline: true },
             { name: "Repeat", value: `\`${repeatLabel}\``, inline: true },
-            {
-                name: "Player Status",
-                value: `Vol: \`${player.volume}%\` • Autoplay: \`${autoplayEnabled ? "On" : "Off"}\`${activeFilter ? ` • Filter: \`${activeFilter}\`` : ""}`,
-                inline: false,
-            },
+            { name: "Shuffle", value: isShuffled ? "`🔀 On`" : "`Off`", inline: true },
+            { name: "Autoplay", value: autoplayEnabled ? "`✨ On`" : "`Off`", inline: true },
         )
         .setFooter({
             text: `${botName} Music Dashboard`,
@@ -108,12 +156,19 @@ function safeEmoji(customEmoji, unicodeFallback) {
     return unicodeFallback;
 }
 
+/**
+ * Builds the 3-row interactive button controller:
+ * Row 1: [Pause / Resume] [Skip] [Stop] [Queue]
+ * Row 2: [Previous] [Shuffle] [Loop] [Volume]
+ * Row 3: [Autoplay] [Lyrics] [Favorite]
+ */
 function buildNowPlayingComponents(client, player) {
     const playerEmoji = client?.emoji?.player || {};
-    const hasPrevious = Boolean(player?.queue?.previous?.length);
+    const hasPrevious = hasAnyPreviousTrack(client, player);
     const canShuffle = Number(player?.queue?.size || 0) >= 2;
     const isPaused = Boolean(player?.paused);
     const loopMode = player?.loop || "none";
+    const autoplayEnabled = isGuildAutoplayEnabled(client, player?.guildId);
 
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -121,12 +176,6 @@ function buildNowPlayingComponents(client, player) {
             .setEmoji(safeEmoji(isPaused ? playerEmoji.resume : playerEmoji.pause, isPaused ? "▶️" : "⏸️"))
             .setLabel(isPaused ? "Resume" : "Pause")
             .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Secondary),
-        new ButtonBuilder()
-            .setCustomId("np:prev")
-            .setEmoji(safeEmoji(playerEmoji.previous, "⏮️"))
-            .setLabel("Previous")
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!hasPrevious),
         new ButtonBuilder()
             .setCustomId("np:skip")
             .setEmoji(safeEmoji(playerEmoji.skip, "⏭️"))
@@ -138,13 +187,19 @@ function buildNowPlayingComponents(client, player) {
             .setLabel("Stop")
             .setStyle(ButtonStyle.Danger),
         new ButtonBuilder()
-            .setCustomId("np:loop")
-            .setEmoji(safeEmoji(playerEmoji.loop, "🔁"))
-            .setLabel(loopMode === "song" ? "Loop: Song" : loopMode === "queue" ? "Loop: Queue" : "Loop")
-            .setStyle(loopMode !== "none" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+            .setCustomId("np:queue")
+            .setEmoji("📋")
+            .setLabel(`Queue (${player?.queue?.size || 0})`)
+            .setStyle(ButtonStyle.Secondary),
     );
 
     const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("np:prev")
+            .setEmoji(safeEmoji(playerEmoji.previous, "⏮️"))
+            .setLabel("Previous")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!hasPrevious),
         new ButtonBuilder()
             .setCustomId("np:shuffle")
             .setEmoji(safeEmoji(playerEmoji.shuffle, "🔀"))
@@ -152,39 +207,48 @@ function buildNowPlayingComponents(client, player) {
             .setStyle(player?.data?.get?.("shuffled") ? ButtonStyle.Primary : ButtonStyle.Secondary)
             .setDisabled(!canShuffle),
         new ButtonBuilder()
-            .setCustomId("np:queue")
-            .setEmoji("📋")
-            .setLabel(`Queue (${player?.queue?.size || 0})`)
-            .setStyle(ButtonStyle.Secondary),
+            .setCustomId("np:loop")
+            .setEmoji(safeEmoji(playerEmoji.loop, "🔁"))
+            .setLabel(loopMode === "song" ? "Loop: Song" : loopMode === "queue" ? "Loop: Queue" : "Loop")
+            .setStyle(loopMode !== "none" ? ButtonStyle.Primary : ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId("np:volume")
             .setEmoji(safeEmoji(playerEmoji.volup, "🔊"))
-            .setLabel(`${player?.volume ?? 100}%`)
+            .setLabel(`Volume (${player?.volume ?? 100}%)`)
             .setStyle(ButtonStyle.Secondary),
+    );
+
+    const row3 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("np:autoplay")
+            .setEmoji("✨")
+            .setLabel(autoplayEnabled ? "Autoplay: On" : "Autoplay")
+            .setStyle(autoplayEnabled ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId("np:lyrics").setEmoji("📜").setLabel("Lyrics").setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId("np:fav").setEmoji("❤️").setLabel("Favorite").setStyle(ButtonStyle.Secondary),
     );
 
-    return [row1, row2];
+    return [row1, row2, row3];
 }
 
-function buildQuickQueueEmbed(client, player) {
+function buildPaginatedQueuePayload(client, player, pageIndex = 0) {
     const embedColor = client?.config?.embedColor || "#ff0051";
     const current = player.queue?.current;
-    const upcoming = Array.isArray(player.queue) ? player.queue.slice(0, 10) : [];
+    const allUpcoming = Array.isArray(player.queue) ? player.queue : [];
+    const perPage = 10;
+    const totalPages = Math.max(1, Math.ceil(allUpcoming.length / perPage));
+    const safePage = Math.min(Math.max(0, pageIndex), totalPages - 1);
+    const startIdx = safePage * perPage;
+    const slice = allUpcoming.slice(startIdx, startIdx + perPage);
 
-    const lines = upcoming.map((t, idx) => {
+    const lines = slice.map((t, idx) => {
         const dur = t.isStream ? "LIVE" : convertTime(t.duration || 0);
         const title = truncateText(t.title, 42);
         const url = t.pluginInfo?.originalUri || t.uri;
-        return `\`${idx + 1}.\` ${url ? `[${title}](${url})` : title} — \`${dur}\``;
+        return `\`${startIdx + idx + 1}.\` ${url ? `[${title}](${url})` : title} — \`${dur}\``;
     });
 
-    const moreCount = Math.max(0, (player.queue?.size || 0) - upcoming.length);
-    if (moreCount > 0) {
-        lines.push(`\n*...and \`${moreCount}\` more track(s). Use \`/queue\` for full pages.*`);
-    }
-
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
         .setColor(embedColor)
         .setTitle(`📋 Server Queue (${player.queue?.size || 0} Upcoming)`)
         .setDescription(
@@ -192,8 +256,34 @@ function buildQuickQueueEmbed(client, player) {
                 (lines.length ? lines.join("\n") : "*No upcoming songs in queue.*"),
         )
         .setFooter({
-            text: `Total Queue Duration: ${convertTime(player.queue?.duration || 0)} • Loop: ${formatRepeatLabel(player.loop)}`,
+            text: `Page ${safePage + 1}/${totalPages} • Total Queue Duration: ${convertTime(player.queue?.duration || 0)} • Loop: ${formatRepeatLabel(player.loop)}`,
         });
+
+    if (totalPages <= 1) {
+        return { embeds: [embed], components: [] };
+    }
+
+    const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("npq:prev")
+            .setEmoji("◀️")
+            .setLabel("Prev")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(safePage <= 0),
+        new ButtonBuilder()
+            .setCustomId("npq:page")
+            .setLabel(`Page ${safePage + 1} / ${totalPages}`)
+            .setStyle(ButtonStyle.Primary)
+            .setDisabled(true),
+        new ButtonBuilder()
+            .setCustomId("npq:next")
+            .setEmoji("▶️")
+            .setLabel("Next")
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(safePage >= totalPages - 1),
+    );
+
+    return { embeds: [embed], components: [row], safePage, totalPages };
 }
 
 function buildVolumePanelPayload(client, player) {
@@ -206,10 +296,10 @@ function buildVolumePanelPayload(client, player) {
         .setColor(embedColor)
         .setTitle("🔊 Volume Controller")
         .setDescription(
-            `Current Volume: **\`${currentVol}%\`**\nAllowed Range: \`${minVol}% — ${maxVol}%\`\n\nUse the buttons below or \`/volume <number>\` for exact control.`,
+            `Current Volume: **\`${currentVol}%\`**\nAllowed Range: \`${minVol}% — ${maxVol}%\`\n\nChoose a quick step below or click **Custom Volume** to type an exact percentage.`,
         );
 
-    const row = new ActionRowBuilder().addComponents(
+    const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId("npvol:-10")
             .setLabel("-10%")
@@ -237,7 +327,11 @@ function buildVolumePanelPayload(client, player) {
             .setDisabled(currentVol >= maxVol),
     );
 
-    return { embeds: [embed], components: [row] };
+    const row2 = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId("npvol:modal").setEmoji("⌨️").setLabel("Custom Volume").setStyle(ButtonStyle.Primary),
+    );
+
+    return { embeds: [embed], components: [row1, row2] };
 }
 
 /**
@@ -263,7 +357,8 @@ async function cleanupNowPlayingMessage(player, deleteMessage = true) {
 }
 
 /**
- * Edits the active Now Playing message in-place when state changes (pause, loop, shuffle, volume, progress).
+ * Edits the active Now Playing message in-place when state changes
+ * (start, pause, resume, track change, queue change, volume change, repeat, shuffle, autoplay, progress).
  */
 async function refreshNowPlayingDashboard(client, player, options = {}) {
     if (!player || player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) return false;
@@ -320,10 +415,45 @@ function attachDashboardCollector(client, player, message) {
 
                 const customId = btnInteraction.customId;
 
-                // Read-only actions (Queue & Favorite) do not require DJ role or even same VC for Favorite
+                // Read-only / personal actions (Queue, Lyrics, Favorite) do not require DJ role or same VC
                 if (customId === "np:queue") {
-                    const qEmbed = buildQuickQueueEmbed(client, player);
-                    await safeReply(btnInteraction, { embeds: [qEmbed], flags: MessageFlags.Ephemeral });
+                    let currentPage = 0;
+                    const initialPayload = buildPaginatedQueuePayload(client, player, currentPage);
+                    const queueReply = await safeReply(btnInteraction, {
+                        embeds: initialPayload.embeds,
+                        components: initialPayload.components,
+                        flags: MessageFlags.Ephemeral,
+                        withResponse: true,
+                    });
+                    const queueMsg = queueReply?.resource?.message || queueReply;
+
+                    if (
+                        queueMsg &&
+                        initialPayload.components.length > 0 &&
+                        typeof queueMsg.createMessageComponentCollector === "function"
+                    ) {
+                        const qCollector = queueMsg.createMessageComponentCollector({ time: 120000 });
+                        qCollector.on("collect", (qBtn) => {
+                            void (async () => {
+                                if (qBtn.user.id !== btnInteraction.user.id) return;
+                                const ack = await safeDeferUpdate(qBtn);
+                                if (!ack) return;
+                                if (qBtn.customId === "npq:prev") currentPage = Math.max(0, currentPage - 1);
+                                else if (qBtn.customId === "npq:next") currentPage += 1;
+                                const updated = buildPaginatedQueuePayload(client, player, currentPage);
+                                currentPage = updated.safePage ?? currentPage;
+                                await safeEditReply(btnInteraction, {
+                                    embeds: updated.embeds,
+                                    components: updated.components,
+                                });
+                            })().catch(() => {});
+                        });
+                    }
+                    return;
+                }
+
+                if (customId === "np:lyrics") {
+                    await handleLyricsCommand(client, btnInteraction);
                     return;
                 }
 
@@ -379,8 +509,24 @@ function attachDashboardCollector(client, player, message) {
                         break;
                     }
                     case "np:prev": {
-                        if (!player.queue.previous?.length) {
-                            replyEmbed.setDescription("No previous song found in session history.");
+                        const prevList = Array.isArray(player.queue.previous) ? player.queue.previous : [];
+                        if (prevList.length > 0) {
+                            const ack = await safeDeferUpdate(btnInteraction);
+                            if (!ack) return;
+
+                            if (player.queue.current) {
+                                await Promise.resolve(player.previous()).catch(() => {});
+                            } else {
+                                const target = prevList.pop();
+                                if (target) await Promise.resolve(player.play(target)).catch(() => {});
+                            }
+                            break;
+                        }
+
+                        const history = await getGuildTrackHistory(client, btnInteraction.guild || { id: player.guildId });
+                        const fallbackEntry = player.queue.current ? history[1] : history[0];
+                        if (!fallbackEntry) {
+                            replyEmbed.setDescription("No previous song found in session or server history.");
                             await safeReply(btnInteraction, { embeds: [replyEmbed], flags: MessageFlags.Ephemeral });
                             return;
                         }
@@ -388,7 +534,8 @@ function attachDashboardCollector(client, player, message) {
                         const ack = await safeDeferUpdate(btnInteraction);
                         if (!ack) return;
 
-                        await Promise.resolve(player.previous()).catch(() => {});
+                        const hydrated = hydrateStoredTrack(client, fallbackEntry, btnInteraction.user);
+                        await Promise.resolve(player.play(hydrated)).catch(() => {});
                         break;
                     }
                     case "np:skip": {
@@ -408,8 +555,11 @@ function attachDashboardCollector(client, player, message) {
                         const ack = await safeDeferUpdate(btnInteraction);
                         if (!ack) return;
 
+                        player._manualStopAt = Date.now();
                         collector.stop("stopped");
+                        await cleanupNowPlayingMessage(player, true);
                         player.queue.clear();
+                        player.data?.set?.("shuffled", false);
                         await Promise.resolve(player.stop()).catch(() => {});
                         break;
                     }
@@ -437,6 +587,19 @@ function attachDashboardCollector(client, player, message) {
                         await refreshNowPlayingDashboard(client, player);
                         break;
                     }
+                    case "np:autoplay": {
+                        const currentAuto = isGuildAutoplayEnabled(client, player.guildId);
+                        const nextAuto = await setGuildAutoplay(client, btnInteraction.guild || player.guildId, !currentAuto);
+                        await refreshNowPlayingDashboard(client, player);
+
+                        replyEmbed.setDescription(
+                            nextAuto
+                                ? "✨ Smart Autoplay is now **enabled** for this server."
+                                : "Smart Autoplay is now **disabled** for this server.",
+                        );
+                        await safeReply(btnInteraction, { embeds: [replyEmbed], flags: MessageFlags.Ephemeral });
+                        break;
+                    }
                     case "np:volume": {
                         const panel = buildVolumePanelPayload(client, player);
                         const volReply = await safeReply(btnInteraction, {
@@ -450,9 +613,6 @@ function attachDashboardCollector(client, player, message) {
                         const volCollector = volMsg.createMessageComponentCollector({ time: 60000 });
                         volCollector.on("collect", (volBtn) => {
                             void (async () => {
-                                const ack = await safeDeferUpdate(volBtn);
-                                if (!ack) return;
-
                                 const currentLive = getGuildPlayer(client, player.guildId);
                                 if (!currentLive || currentLive !== player) {
                                     volCollector.stop();
@@ -461,6 +621,72 @@ function attachDashboardCollector(client, player, message) {
 
                                 const minVol = client?.config?.minVolume ?? 1;
                                 const maxVol = client?.config?.maxVolume ?? 150;
+
+                                if (volBtn.customId === "npvol:modal") {
+                                    if (typeof volBtn.showModal !== "function") {
+                                        await safeDeferUpdate(volBtn);
+                                        return;
+                                    }
+
+                                    const modalCustomId = `npvol:submit:${player.guildId}:${Date.now()}`;
+                                    const modal = new ModalBuilder()
+                                        .setCustomId(modalCustomId)
+                                        .setTitle("Set Player Volume")
+                                        .addComponents(
+                                            new ActionRowBuilder().addComponents(
+                                                new TextInputBuilder()
+                                                    .setCustomId("volume_value")
+                                                    .setLabel(`Volume Percentage (${minVol} - ${maxVol})`)
+                                                    .setStyle(TextInputStyle.Short)
+                                                    .setMinLength(1)
+                                                    .setMaxLength(3)
+                                                    .setPlaceholder(String(player.volume ?? 100))
+                                                    .setValue(String(player.volume ?? 100))
+                                                    .setRequired(true),
+                                            ),
+                                        );
+
+                                    await volBtn.showModal(modal).catch(() => {});
+                                    if (typeof volBtn.awaitModalSubmit !== "function") return;
+
+                                    const submitted = await volBtn
+                                        .awaitModalSubmit({
+                                            time: 45000,
+                                            filter: (m) => m.customId === modalCustomId && m.user.id === volBtn.user.id,
+                                        })
+                                        .catch(() => null);
+
+                                    if (!submitted) return;
+
+                                    const rawVal = submitted.fields?.getTextInputValue?.("volume_value") || "";
+                                    const parsed = Number.parseInt(String(rawVal).trim(), 10);
+
+                                    if (!Number.isFinite(parsed) || parsed < minVol || parsed > maxVol) {
+                                        const invalidEmbed = new EmbedBuilder()
+                                            .setColor(embedColor)
+                                            .setDescription(`Please enter a valid number between \`${minVol}\` and \`${maxVol}\`.`);
+                                        await safeReply(submitted, { embeds: [invalidEmbed], flags: MessageFlags.Ephemeral });
+                                        return;
+                                    }
+
+                                    if (typeof submitted.deferUpdate === "function") {
+                                        await safeDeferUpdate(submitted);
+                                    } else {
+                                        const okEmbed = new EmbedBuilder()
+                                            .setColor(embedColor)
+                                            .setDescription(`🔊 Volume set to \`${parsed}%\`.`);
+                                        await safeReply(submitted, { embeds: [okEmbed], flags: MessageFlags.Ephemeral });
+                                    }
+
+                                    await Promise.resolve(player.setVolume(parsed)).catch(() => {});
+                                    await safeEditReply(btnInteraction, buildVolumePanelPayload(client, player));
+                                    await refreshNowPlayingDashboard(client, player);
+                                    return;
+                                }
+
+                                const ack = await safeDeferUpdate(volBtn);
+                                if (!ack) return;
+
                                 let targetVol = player.volume;
 
                                 if (volBtn.customId === "npvol:reset") targetVol = 100;
@@ -486,40 +712,83 @@ function attachDashboardCollector(client, player, message) {
     });
 }
 
+const dashboardSendLocks = new Map();
+
 /**
  * Sends a fresh Now Playing Dashboard to the player's text channel and attaches its interactive collector.
+ * Serialized per-guild so concurrent trackStart + command handlers never post duplicate dashboards.
  */
 async function sendOrReplaceNowPlayingDashboard(client, player, track = null) {
     if (!player || player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) return null;
 
-    const currentTrack = track || player.queue?.current;
-    if (!currentTrack) return null;
+    const gId = String(player.guildId || "");
+    const previousOp = dashboardSendLocks.get(gId) || Promise.resolve();
 
-    await cleanupNowPlayingMessage(player, true);
+    const task = previousOp
+        .catch(() => {})
+        .then(async () => {
+            if (!player || player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) return null;
 
-    const textChannel = client.channels?.cache?.get?.(player.textId);
-    if (!textChannel || typeof textChannel.send !== "function") return null;
+            const currentTrack = track || player.queue?.current;
+            if (!currentTrack) return null;
 
-    const embed = buildNowPlayingEmbed(client, player, currentTrack);
-    const components = buildNowPlayingComponents(client, player);
+            await cleanupNowPlayingMessage(player, true);
 
-    const sent = await textChannel.send({ embeds: [embed], components }).catch((err) => {
-        Logger.debug(`[NowPlayingDashboard] Gagal mengirim pesan dashboard: ${err?.message || err}`);
-        return null;
-    });
+            const textChannel = client.channels?.cache?.get?.(player.textId);
+            if (!textChannel || typeof textChannel.send !== "function") return null;
 
-    if (!sent) return null;
+            const embed = buildNowPlayingEmbed(client, player, currentTrack);
+            const components = buildNowPlayingComponents(client, player);
 
-    // Re-check player state in case player was destroyed while sending
-    if (player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) {
-        await sent.delete().catch(() => {});
-        return null;
+            const sent = await textChannel.send({ embeds: [embed], components }).catch((err) => {
+                Logger.debug(`[NowPlayingDashboard] Gagal mengirim pesan dashboard: ${err?.message || err}`);
+                return null;
+            });
+
+            if (!sent) return null;
+
+            // Re-check player state in case player was destroyed while sending
+            if (player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) {
+                await sent.delete().catch(() => {});
+                return null;
+            }
+
+            player.message = sent;
+            player._lastProgressEditAt = Date.now();
+            attachDashboardCollector(client, player, sent);
+            return sent;
+        });
+
+    dashboardSendLocks.set(gId, task);
+    try {
+        return await task;
+    } finally {
+        if (dashboardSendLocks.get(gId) === task) {
+            dashboardSendLocks.delete(gId);
+        }
     }
+}
 
-    player.message = sent;
-    player._lastProgressEditAt = Date.now();
-    attachDashboardCollector(client, player, sent);
-    return sent;
+/**
+ * Waits for any in-flight dashboard post on `player.guildId`, or creates one if none exists yet.
+ */
+async function ensureNowPlayingDashboardVisible(client, player, fallbackTrack = null) {
+    if (!player || player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) return null;
+    const gId = String(player.guildId || "");
+    const pending = dashboardSendLocks.get(gId);
+    if (pending) {
+        const msg = await pending.catch(() => null);
+        if (msg || player.message) return msg || player.message;
+    }
+    if (player.message) {
+        await refreshNowPlayingDashboard(client, player).catch(() => {});
+        return player.message;
+    }
+    return sendOrReplaceNowPlayingDashboard(client, player, fallbackTrack || player.queue?.current);
+}
+
+function buildQuickQueueEmbed(client, player) {
+    return buildPaginatedQueuePayload(client, player, 0).embeds[0];
 }
 
 module.exports = {
@@ -528,10 +797,13 @@ module.exports = {
     formatRepeatLabel,
     buildNowPlayingEmbed,
     buildNowPlayingComponents,
+    buildPaginatedQueuePayload,
     buildQuickQueueEmbed,
+    buildVolumePanelPayload,
     cleanupNowPlayingMessage,
     refreshNowPlayingDashboard,
     sendOrReplaceNowPlayingDashboard,
+    ensureNowPlayingDashboardVisible,
 };
 
 /**

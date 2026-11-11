@@ -68,27 +68,36 @@ module.exports = async (client) => {
     });
 
     setInterval(async () => {
-        const promises = [
-            client.cluster.broadcastEval("this.guilds.cache.size"),
-            client.cluster.broadcastEval((c) => c.guilds.cache.reduce((acc, guild) => acc + guild.memberCount, 0)),
-        ];
+        try {
+            let servers = 0;
+            let members = 0;
 
-        const results = await Promise.all(promises);
+            if (client.cluster && typeof client.cluster.broadcastEval === "function") {
+                const results = await Promise.all([
+                    client.cluster.broadcastEval("this.guilds.cache.size"),
+                    client.cluster.broadcastEval((c) => c.guilds.cache.reduce((acc, guild) => acc + (guild.memberCount || 0), 0)),
+                ]);
+                servers = results[0].reduce((acc, guildCount) => acc + guildCount, 0);
+                members = results[1].reduce((acc, memberCount) => acc + memberCount, 0);
+            } else {
+                servers = client.guilds.cache.size;
+                members = client.guilds.cache.reduce((acc, guild) => acc + (guild.memberCount || 0), 0);
+            }
 
-        const servers = results[0].reduce((acc, guildCount) => acc + guildCount, 0);
-        const members = results[1].reduce((acc, memberCount) => acc + memberCount, 0);
+            const status = [
+                { type: ActivityType.Playing, name: `/play | ${botName}` },
+                { type: ActivityType.Listening, name: `${members} Users` },
+                { type: ActivityType.Competing, name: `${servers} Servers` },
+            ];
 
-        const status = [
-            { type: ActivityType.Playing, name: `/play | ${botName}` },
-            { type: ActivityType.Listening, name: `${members} Users` },
-            { type: ActivityType.Competing, name: `${servers} Servers` },
-        ];
+            const index = Math.floor(Math.random() * status.length);
+            const presenceOptions = { activities: [{ type: status[index].type, name: status[index].name }], status: "online" };
 
-        const index = Math.floor(Math.random() * status.length);
-        const presenceOptions = { activities: [{ type: status[index].type, name: status[index].name }], status: "online" };
-
-        client.user.setPresence(presenceOptions);
-    }, 5000);
+            client.user.setPresence(presenceOptions);
+        } catch (err) {
+            Logger.debug(`Presence update skipped: ${err?.message || err}`);
+        }
+    }, 15000);
 
     Logger.info(`${botName} Music Bot (${client.user.username}) is ready with ${await client.guilds.cache.size} server`);
 };

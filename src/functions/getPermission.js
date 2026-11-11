@@ -4,6 +4,8 @@ const { safeReply, isUnknownInteractionError, isAlreadyAcknowledgedError } = req
 const { getGuildPlayer } = require("./voiceSessionManager.js");
 const { checkDjAccess } = require("./musicPermissions.js");
 
+const VOICE_SCOPED_PERM_NAMES = new Set(["Connect", "Speak", "RequestToSpeak"]);
+
 function resolveMemberPermissions(response) {
     if (response?.memberPermissions && typeof response.memberPermissions.has === "function") {
         return response.memberPermissions;
@@ -38,15 +40,21 @@ module.exports = {
         }
 
         const memberPerms = resolveMemberPermissions(response);
-        if (command.permissions.user?.length > 0 && (!memberPerms || !memberPerms.has(command.permissions.user))) {
-            embed.setDescription(`You don't have \`${command.permissions.user.join(", ")}\` permissions to execute this command.`);
+        const guildLevelUserPerms = (command.permissions.user || []).filter(
+            (p) => !command.settings?.voice || !VOICE_SCOPED_PERM_NAMES.has(p),
+        );
+        if (guildLevelUserPerms.length > 0 && (!memberPerms || !memberPerms.has(guildLevelUserPerms))) {
+            embed.setDescription(`You don't have \`${guildLevelUserPerms.join(", ")}\` permissions to execute this command.`);
 
             return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         const botMember = response.guild?.members?.me;
-        if (command.permissions.bot?.length > 0 && botMember && !botMember.permissions.has(command.permissions.bot)) {
-            embed.setDescription(`The bot doesn't have \`${command.permissions.bot.join(", ")}\` permissions to execute this command.`);
+        const guildLevelBotPerms = (command.permissions.bot || []).filter(
+            (p) => !command.settings?.voice || !VOICE_SCOPED_PERM_NAMES.has(p),
+        );
+        if (guildLevelBotPerms.length > 0 && botMember && !botMember.permissions.has(guildLevelBotPerms)) {
+            embed.setDescription(`The bot doesn't have \`${guildLevelBotPerms.join(", ")}\` permissions to execute this command.`);
 
             return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
@@ -59,19 +67,48 @@ module.exports = {
                 return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
             }
 
-            if (botMember) {
+            if (botMember && typeof voiceChannel.permissionsFor === "function") {
                 const botVoicePerms = voiceChannel.permissionsFor(botMember);
-                if (botVoicePerms && !botVoicePerms.has(PermissionsBitField.Flags.Connect)) {
-                    embed.setDescription(`The bot doesn't have \`Connect\` permission in ${voiceChannel.toString()}.`);
+                if (botVoicePerms) {
+                    if (
+                        typeof voiceChannel.viewable === "boolean" &&
+                        !voiceChannel.viewable &&
+                        !botVoicePerms.has(PermissionsBitField.Flags.ViewChannel)
+                    ) {
+                        embed.setDescription(`The bot doesn't have \`ViewChannel\` permission in ${voiceChannel.toString()}.`);
+                        return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
+                    }
 
-                    return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
+                    if (!botVoicePerms.has(PermissionsBitField.Flags.Connect)) {
+                        embed.setDescription(`The bot doesn't have \`Connect\` permission in ${voiceChannel.toString()}.`);
+                        return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
+                    }
+
+                    if (voiceChannel.type === 13) {
+                        const canStageSpeak =
+                            botVoicePerms.has(PermissionsBitField.Flags.RequestToSpeak) ||
+                            botVoicePerms.has(PermissionsBitField.Flags.MuteMembers) ||
+                            botVoicePerms.has(PermissionsBitField.Flags.Speak);
+                        if (!canStageSpeak) {
+                            embed.setDescription(
+                                `The bot needs \`Request to Speak\` or Stage Moderator permission in ${voiceChannel.toString()}.`,
+                            );
+                            return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
+                        }
+                    } else if ((command.permissions.bot || []).includes("Speak") && !botVoicePerms.has(PermissionsBitField.Flags.Speak)) {
+                        embed.setDescription(`The bot doesn't have \`Speak\` permission in ${voiceChannel.toString()}.`);
+                        return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
+                    }
+
+                    const alreadyInThisChannel = botMember.voice?.channelId === voiceChannel.id;
+                    if (!alreadyInThisChannel && voiceChannel.full && !botVoicePerms.has(PermissionsBitField.Flags.MoveMembers)) {
+                        embed.setDescription(`${voiceChannel.toString()} is currently full.`);
+                        return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
+                    }
                 }
-
-                if (botVoicePerms && !botVoicePerms.has(PermissionsBitField.Flags.Speak) && voiceChannel.type === 2) {
-                    embed.setDescription(`The bot doesn't have \`Speak\` permission in ${voiceChannel.toString()}.`);
-
-                    return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
-                }
+            } else if (botMember && command.permissions.bot?.length > 0 && !botMember.permissions.has(command.permissions.bot)) {
+                embed.setDescription(`The bot doesn't have \`${command.permissions.bot.join(", ")}\` permissions to execute this command.`);
+                return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
             }
         }
 
@@ -130,7 +167,13 @@ module.exports = {
                 return;
             }
 
-            Logger.error(`Failed to execute command '${command.name}':`, error);
+            Logger.music("error", `Command execution error in /${command.name}`, {
+                guildId: response.guild?.id || response.guildId,
+                userId,
+                command: command.name,
+                playerStatus: player ? (player.playing ? "playing" : "idle") : "none",
+                errorMessage: error,
+            });
 
             const errEmbed = new EmbedBuilder()
                 .setColor(0xff4757)

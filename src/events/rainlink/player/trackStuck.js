@@ -20,7 +20,14 @@ module.exports = async (client, player) => {
     }
 
     const guild = client.guilds.cache.get(player.guildId);
-    Logger.error(`Song got stuck from ${guild?.name || "Unknown"} (${player.guildId})`);
+    Logger.music("error", `Track stuck in ${guild?.name || "Unknown"}`, {
+        guildId: player.guildId,
+        userId: player.queue?.current?.requester?.id,
+        command: "trackStuck",
+        playerStatus: `pos=${player.position || 0}ms`,
+        nodeStatus: player.node?.options?.name || "Lavalink",
+        errorMessage: "Track stuck threshold exceeded",
+    });
 
     await cleanupNowPlayingMessage(player, true);
 

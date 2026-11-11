@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const { PermissionsBitField } = require("discord.js");
 const { normalizeGuildData, normalizeUserData, createDataGuild, createDataUser } = require("./createData.js");
 const { cleanupStalePlayerIfDisconnected, clearManualDisconnect, getGuildPlayer } = require("./voiceSessionManager.js");
-const { getAnyConnectedNode } = require("./nodeHealthManager.js");
+const { getAnyConnectedNode, waitForNodeSessionReady, getCachedNodeCapabilities } = require("./nodeHealthManager.js");
 const { serializeTrack } = require("./musicSourceResolver.js");
 const Logger = require("../utils/logger");
 
@@ -207,20 +207,28 @@ async function getOrCreateGuildPlayer(client, options = {}) {
             throw new Error("Lavalink music node is currently offline or reconnecting.");
         }
 
+        const sessionReady = await waitForNodeSessionReady(connectedNode, 5000);
+        if (!sessionReady) {
+            throw new Error("Lavalink node session is still initializing. Please try again in a few seconds.");
+        }
+
         await clearManualDisconnect(client, gId, guild);
         const musicSettings = getGuildMusicSettings(client, guild);
+        const resolvedShardId = guild.shardId ?? client?.ws?.shards?.first?.()?.id ?? 0;
+        const initialVolume = Math.max(1, Number(musicSettings.defaultVolume || client?.config?.defaultVolume || 100));
 
         const created = await client.rainlink.create({
             guildId: gId,
             textId: textChannelId,
             voiceId: voiceChannelId,
-            shardId: guild.shardId ?? 0,
-            volume: musicSettings.defaultVolume || client.config.defaultVolume || 100,
+            shardId: resolvedShardId,
+            volume: initialVolume,
             deaf: true,
         });
 
         // Guard against duplicate entries: ensure RainlinkDatabase maps strictly 1 player for gId
         const registered = getGuildPlayer(client, gId) || created;
+        await inspectDiscordVoiceAudioReadiness(guild, registered);
         return registered;
     })();
 
@@ -230,6 +238,207 @@ async function getOrCreateGuildPlayer(client, options = {}) {
     } finally {
         guildPlayerCreationLocks.delete(gId);
     }
+}
+
+/**
+ * Returns true ONLY when a player is actively streaming a track OR is paused with a loaded current track.
+ * Note: RainlinkPlayer initializes `this.paused = true` and `this.playing = false` on creation and after `clear()`,
+ * so checking `!player.paused` alone falsely treats every new/idle player as paused!
+ */
+function isPlayerActivelyPlayingOrPausedTrack(player) {
+    if (!player) return false;
+    return Boolean(player.playing || (player.paused && player.track && player.queue?.current));
+}
+
+/**
+ * Inspects Discord voice state for Stage suppression or Server Mute so audio is never silently blocked.
+ */
+async function inspectDiscordVoiceAudioReadiness(guild, player) {
+    const warnings = [];
+    const botMember = guild?.members?.me;
+    const botVoice = botMember?.voice;
+
+    if (botVoice) {
+        // Handle Stage Channel speaker unsuppression / request-to-speak
+        const channel = botVoice.channel || (player?.voiceId ? guild?.channels?.cache?.get?.(player.voiceId) : null);
+        if ((channel?.type === 13 || botVoice.suppress) && botVoice.suppress) {
+            let unsuppressed = false;
+            if (typeof botVoice.setSuppressed === "function") {
+                unsuppressed = await botVoice
+                    .setSuppressed(false)
+                    .then(() => true)
+                    .catch(() => false);
+            }
+            if (!unsuppressed && typeof botVoice.setRequestToSpeak === "function") {
+                await botVoice.setRequestToSpeak(true).catch(() => {});
+                warnings.push("Bot is in a Stage Channel awaiting Speaker approval.");
+            }
+        }
+
+        // Handle accidental Server Mute on the bot in Discord
+        if (botVoice.serverMute) {
+            let unmuted = false;
+            if (botMember.permissions?.has?.(PermissionsBitField.Flags.MuteMembers) && typeof botVoice.setMute === "function") {
+                unmuted = await botVoice
+                    .setMute(false, "Auto-unmuting music bot for audio playback")
+                    .then(() => true)
+                    .catch(() => false);
+            }
+            if (!unmuted) {
+                warnings.push("Bot is currently Server Muted in Discord — right-click the bot and disable Server Mute to hear audio.");
+            }
+            player?.data?.set?.("serverMuted", !unmuted);
+        } else {
+            player?.data?.set?.("serverMuted", false);
+        }
+    }
+
+    return warnings;
+}
+
+/**
+ * Starts playback on an idle RainlinkPlayer (correctly handling Rainlink's initial `paused = true`),
+ * ensures non-zero volume and complete voice handshake, and optionally waits for Lavalink's `trackStart`
+ * confirmation so `"Loading Track"` never hangs permanently.
+ */
+async function startPlayerIfIdle(client, player, options = {}) {
+    if (!player) {
+        return { ok: false, error: "Music player is unavailable." };
+    }
+
+    if (isPlayerActivelyPlayingOrPausedTrack(player)) {
+        return { ok: true, alreadyActive: true, track: player.queue?.current || null };
+    }
+
+    const guild = options.guild || client?.guilds?.cache?.get?.(String(player.guildId || "")) || null;
+    const warnings = await inspectDiscordVoiceAudioReadiness(guild, player);
+
+    // Ensure volume is never 0 (muted)
+    const defaultVol = Math.max(
+        1,
+        Number(getGuildMusicSettings(client, guild || player.guildId)?.defaultVolume || client?.config?.defaultVolume || 100),
+    );
+    if (!Number.isFinite(player.volume) || player.volume <= 0) {
+        if (typeof player.setVolume === "function") {
+            await Promise.resolve(player.setVolume(defaultVol)).catch(() => {
+                player.volume = defaultVol;
+            });
+        } else {
+            player.volume = defaultVol;
+        }
+    }
+
+    const hasLiveWsNode = Boolean(
+        player.node?.driver?.wsClient && typeof client?.rainlink?.on === "function" && typeof client?.rainlink?.off === "function",
+    );
+    const waitForStart = Boolean(options.waitForTrackStart && hasLiveWsNode);
+    const timeoutMs = Math.max(1500, Number(options.timeoutMs || 9000));
+
+    if (!waitForStart) {
+        try {
+            player.paused = false;
+            await Promise.resolve(player.play());
+            return { ok: true, started: true, track: player.queue?.current || null, warnings };
+        } catch (err) {
+            Logger.music("error", "startPlayerIfIdle failed on play()", {
+                guildId: player.guildId,
+                userId: options.userId,
+                command: options.command || "play",
+                playerStatus: `state=${player.state}`,
+                nodeStatus: player.node?.options?.name || "Lavalink",
+                errorMessage: err,
+            });
+            return { ok: false, error: err?.message || "Failed to start audio playback on Lavalink.", warnings };
+        }
+    }
+
+    // Attach temporary guild-scoped event listeners BEFORE calling player.play() so fast loopback events are never missed
+    let cleanupListeners = () => {};
+    const eventOutcomePromise = new Promise((resolve) => {
+        let settled = false;
+        const finish = (payload) => {
+            if (settled) return;
+            settled = true;
+            cleanupListeners();
+            resolve(payload);
+        };
+
+        const onTrackStart = (p, startedTrack) => {
+            if (String(p?.guildId) !== String(player.guildId)) return;
+            finish({ ok: true, started: true, track: startedTrack || player.queue?.current || null });
+        };
+
+        const onPlayerException = (p, data) => {
+            if (String(p?.guildId) !== String(player.guildId)) return;
+            const msg = data?.exception?.message || data?.message || "Lavalink reported a track playback exception.";
+            finish({ ok: false, error: msg });
+        };
+
+        const onTrackResolveError = (p, _track, errMsg) => {
+            if (String(p?.guildId) !== String(player.guildId)) return;
+            if (!p.queue?.size) {
+                finish({ ok: false, error: errMsg || "Failed to resolve playable audio stream." });
+            }
+        };
+
+        const onWsClosed = (p, data) => {
+            if (String(p?.guildId) !== String(player.guildId)) return;
+            const code = Number(data?.code || 0);
+            if (code === 4017) {
+                finish({
+                    ok: false,
+                    error: "Discord voice gateway closed with code 4017 (DAVE E2EE required). Upgrade Lavalink server to v4.2.2+ with libdave.",
+                });
+            } else if (code === 4014) {
+                finish({ ok: false, error: "Bot was disconnected or lacks permission in the Discord voice channel (code 4014)." });
+            }
+        };
+
+        const timer = setTimeout(() => {
+            const nodeCaps = getCachedNodeCapabilities(player.node);
+            const daveHint =
+                nodeCaps?.daveCapable === false
+                    ? " (Connected Lavalink node is < v4.2.0 without Discord DAVE E2EE support — upgrade Lavalink to v4.2.2+)"
+                    : "";
+            finish({
+                ok: false,
+                error: `Timed out waiting for Lavalink audio stream to start${daveHint}. Check Lavalink audio source plugins & UDP voice connectivity.`,
+            });
+        }, timeoutMs);
+        if (typeof timer.unref === "function") timer.unref();
+
+        cleanupListeners = () => {
+            clearTimeout(timer);
+            client.rainlink.off("trackStart", onTrackStart);
+            client.rainlink.off("playerException", onPlayerException);
+            client.rainlink.off("trackResolveError", onTrackResolveError);
+            client.rainlink.off("playerWebsocketClosed", onWsClosed);
+        };
+
+        client.rainlink.on("trackStart", onTrackStart);
+        client.rainlink.on("playerException", onPlayerException);
+        client.rainlink.on("trackResolveError", onTrackResolveError);
+        client.rainlink.on("playerWebsocketClosed", onWsClosed);
+    });
+
+    try {
+        player.paused = false;
+        await Promise.resolve(player.play());
+    } catch (err) {
+        cleanupListeners();
+        Logger.music("error", "Lavalink play() rejected during startup", {
+            guildId: player.guildId,
+            userId: options.userId,
+            command: options.command || "play",
+            playerStatus: `state=${player.state}`,
+            nodeStatus: player.node?.options?.name || "Lavalink",
+            errorMessage: err,
+        });
+        return { ok: false, error: err?.message || "Lavalink failed to start track.", warnings };
+    }
+
+    const outcome = await eventOutcomePromise;
+    return { ...outcome, warnings };
 }
 
 /**
@@ -572,6 +781,8 @@ async function findAutoplayRecommendation(client, player) {
         if (id && recentSeen.has(id)) return false;
         if (uri && recentSeen.has(uri)) return false;
         if (title && recentSeen.has(title)) return false;
+        if (Number(cand.duration || 0) > 20 * 60 * 1000) return false;
+        if (/\b(1\s*hour|10\s*hour|karaoke|instrumental\s*loop)\b/i.test(title)) return false;
         return true;
     };
 
@@ -630,6 +841,9 @@ module.exports = {
     setGuildAutoplay,
     checkDjAccess,
     getOrCreateGuildPlayer,
+    isPlayerActivelyPlayingOrPausedTrack,
+    inspectDiscordVoiceAudioReadiness,
+    startPlayerIfIdle,
     recordGuildTrackHistory,
     getGuildTrackHistory,
     clearGuildTrackHistory,

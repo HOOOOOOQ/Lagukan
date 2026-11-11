@@ -3,7 +3,14 @@ const Logger = require("../../../utils/logger");
 
 module.exports = (client, node, error) => {
     recordNodeEvent(node, "error", error);
-    Logger.error(`Node ${node?.options?.name || "Lavalink"} error:`, error?.message || error);
+    Logger.music("error", "Lavalink node connection/protocol error", {
+        guildId: "-",
+        userId: "-",
+        command: "nodeError",
+        playerStatus: "-",
+        nodeStatus: `${node?.options?.name || "Lavalink"}(state=${node?.state ?? "?"})`,
+        errorMessage: error,
+    });
 };
 
 /**

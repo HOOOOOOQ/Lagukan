@@ -9,8 +9,10 @@ const {
     removeUserFavorite,
     clearUserFavorites,
     getOrCreateGuildPlayer,
+    isPlayerActivelyPlayingOrPausedTrack,
+    startPlayerIfIdle,
 } = require("../../../functions/musicPermissions.js");
-const { refreshNowPlayingDashboard, truncateText } = require("../../../functions/nowPlayingManager.js");
+const { refreshNowPlayingDashboard, ensureNowPlayingDashboardVisible, truncateText } = require("../../../functions/nowPlayingManager.js");
 const { getGuildPlayer } = require("../../../functions/voiceSessionManager.js");
 const { safeDeferReply, safeEditReply, safeDeferUpdate } = require("../../../functions/interactionResponder.js");
 
@@ -208,9 +210,21 @@ module.exports = {
             if (pos !== null) {
                 const selected = favorites[pos - 1];
                 const track = hydrateStoredTrack(client, selected, interaction.user);
+                const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
                 player.queue.add(track);
-                if (!player.playing && !player.paused) {
-                    await Promise.resolve(player.play());
+                if (!wasPlaying) {
+                    const outcome = await startPlayerIfIdle(client, player, {
+                        guild: interaction.guild,
+                        userId: interaction.user?.id,
+                        command: "favorite_play",
+                        waitForTrackStart: true,
+                        timeoutMs: 9000,
+                    });
+                    if (!outcome.ok) {
+                        embed.setDescription(`❌ Could not start playback: ${outcome.error || "Unknown error"}`);
+                        return safeEditReply(interaction, { embeds: [embed] });
+                    }
+                    await ensureNowPlayingDashboardVisible(client, player, outcome.track || track);
                 } else {
                     await refreshNowPlayingDashboard(client, player).catch(() => {});
                 }
@@ -224,9 +238,21 @@ module.exports = {
                 player.data?.set?.("shuffled", true);
             }
 
+            const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
             const staged = enqueueTracksStaged(client, player, tracks, { chunkSize: 50 });
-            if (!player.playing && !player.paused) {
-                await Promise.resolve(player.play());
+            if (!wasPlaying) {
+                const outcome = await startPlayerIfIdle(client, player, {
+                    guild: interaction.guild,
+                    userId: interaction.user?.id,
+                    command: "favorite_playall",
+                    waitForTrackStart: true,
+                    timeoutMs: 9000,
+                });
+                if (!outcome.ok) {
+                    embed.setDescription(`❌ Could not start playback: ${outcome.error || "Unknown error"}`);
+                    return safeEditReply(interaction, { embeds: [embed] });
+                }
+                await ensureNowPlayingDashboardVisible(client, player, outcome.track || tracks[0]);
             } else {
                 await refreshNowPlayingDashboard(client, player).catch(() => {});
             }
