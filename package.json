@@ -9,6 +9,7 @@
     "scripts": {
         "start": "node ./src/index.js",
         "start:termux": "STANDALONE_MODE=true node ./src/index.js",
+        "validate:commands": "node ./src/functions/slashCommandValidator.js",
         "format": "prettier -w .",
         "format:check": "prettier -c ."
     },
