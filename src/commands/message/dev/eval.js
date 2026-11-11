@@ -28,7 +28,12 @@ module.exports = {
         const code = args.join(" ");
 
         const sanitize = (str) => {
-            const sensitives = [process.env.TOKEN, process.env.MONGO_URI].filter(Boolean);
+            const sensitives = [
+                process.env.TOKEN,
+                process.env.MONGO_URI,
+                process.env.LAVALINK_PASSWORD,
+                process.env.SPOTIFY_CLIENT_SECRET,
+            ].filter(Boolean);
             for (const secret of sensitives) {
                 str = str.replaceAll(secret, "[REDACTED]");
             }

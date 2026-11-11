@@ -1,12 +1,293 @@
-const { EmbedBuilder } = require("discord.js");
-const { readdirSync } = require("fs");
-const path = require("path");
-const { buildSupportComponents, safeReply } = require("../../../functions/interactionResponder.js");
+const {
+    ActionRowBuilder,
+    ApplicationCommandOptionType,
+    ButtonBuilder,
+    ButtonStyle,
+    EmbedBuilder,
+    MessageFlags,
+    StringSelectMenuBuilder,
+} = require("discord.js");
+const { HELP_CATEGORIES, getVerifiedCommandDocs, getDocsForSection, formatCommandField } = require("../../../functions/helpCatalog.js");
+const { safeReply, safeEditReply, safeDeferUpdate } = require("../../../functions/interactionResponder.js");
+
+const COMMANDS_PER_PAGE = 4;
+const COLLECTOR_TIMEOUT_MS = 5 * 60 * 1000;
+
+function buildHomeEmbed(client, interaction, allDocs) {
+    const botName = client.config.botName || "Lagukan";
+    const iconUrl = client.user?.displayAvatarURL?.() || undefined;
+    const requesterLabel = interaction.member || `<@${interaction.user.id}>`;
+
+    const musicDocs = allDocs.filter((d) => d.categoryKey === "music");
+    const playlistDocs = allDocs.filter((d) => d.categoryKey === "playlist");
+    const musicSettingDocs = allDocs.filter((d) => d.categoryKey === "settings");
+    const customRoleDocs = allDocs.filter((d) => d.categoryKey === "customrole");
+    const adminDocs = allDocs.filter((d) => d.categoryKey === "admin");
+
+    const fmtNames = (arr) => arr.map((d) => `\`/${d.name}\``).join(", ") || "-";
+
+    return new EmbedBuilder()
+        .setColor(client.config.embedColor)
+        .setAuthor({ name: `${botName} Music Bot • Pusat Bantuan (/help)`, iconURL: iconUrl })
+        .setThumbnail(iconUrl || null)
+        .setDescription(
+            `Halo **${requesterLabel}**! Saya **${botName}**, bot musik multi-platform & manajemen komunitas Discord.\n` +
+                `Mendukung **YouTube, YouTube Music, Spotify** *(resolusi audio cerdas)*, **SoundCloud, Deezer, Bandcamp, & Direct Audio URL**.\n\n` +
+                `Pilih kategori pada **Select Menu** atau klik tombol di bawah untuk melihat **fungsi, cara pakai, parameter, contoh, permission, & batasan** setiap perintah.`,
+        )
+        .addFields(
+            {
+                name: `🎵 MUSIC (${musicDocs.length})`,
+                value: fmtNames(musicDocs),
+                inline: false,
+            },
+            {
+                name: `📂 PLAYLIST (${playlistDocs.length})`,
+                value: fmtNames(playlistDocs),
+                inline: true,
+            },
+            {
+                name: `⚙️ MUSIC SETTINGS (${musicSettingDocs.length})`,
+                value: fmtNames(musicSettingDocs),
+                inline: true,
+            },
+            {
+                name: `🎨 CUSTOM ROLE (${customRoleDocs.length})`,
+                value: fmtNames(customRoleDocs),
+                inline: true,
+            },
+            {
+                name: `🛡️ ADMIN & UTILITAS (${adminDocs.length})`,
+                value: fmtNames(adminDocs),
+                inline: false,
+            },
+        )
+        .setFooter({
+            text: `© ${botName} Music Bot • Total Slash Command Aktif: ${allDocs.length} • Ketik /help command:<nama> untuk detail cepat`,
+            iconURL: iconUrl,
+        })
+        .setTimestamp();
+}
+
+function buildSectionEmbed(client, sectionKey, pageIndex, allDocs) {
+    const botName = client.config.botName || "Lagukan";
+    const iconUrl = client.user?.displayAvatarURL?.() || undefined;
+
+    const meta =
+        sectionKey === "music_settings_only"
+            ? HELP_CATEGORIES.settings
+            : sectionKey === "settings"
+              ? {
+                    ...HELP_CATEGORIES.settings,
+                    title: "⚙️ Kategori: MUSIC SETTINGS & CUSTOM ROLE",
+                    description: "Pengaturan pemutar musik server (Autoplay, 24/7, DJ Mode, Config) serta sistem Custom Role.",
+                }
+              : HELP_CATEGORIES[sectionKey] || HELP_CATEGORIES.music;
+
+    const sectionDocs = getDocsForSection(allDocs, sectionKey);
+    const totalPages = Math.max(1, Math.ceil(sectionDocs.length / COMMANDS_PER_PAGE));
+    const safePage = Math.max(0, Math.min(pageIndex, totalPages - 1));
+    const slice = sectionDocs.slice(safePage * COMMANDS_PER_PAGE, (safePage + 1) * COMMANDS_PER_PAGE);
+
+    const embed = new EmbedBuilder()
+        .setColor(client.config.embedColor)
+        .setAuthor({ name: `${botName} • Dokumentasi Perintah`, iconURL: iconUrl })
+        .setTitle(meta.title)
+        .setDescription(meta.description)
+        .setFooter({
+            text: `Halaman ${safePage + 1}/${totalPages} • Menampilkan ${slice.length} dari ${sectionDocs.length} command di kategori ini`,
+            iconURL: iconUrl,
+        })
+        .setTimestamp();
+
+    for (const doc of slice) {
+        embed.addFields(formatCommandField(doc));
+    }
+
+    return { embed, totalPages, safePage, sectionDocs };
+}
+
+function buildSingleCommandEmbed(client, doc) {
+    const botName = client.config.botName || "Lagukan";
+    const iconUrl = client.user?.displayAvatarURL?.() || undefined;
+    const catMeta = HELP_CATEGORIES[doc.categoryKey] || HELP_CATEGORIES.music;
+
+    return new EmbedBuilder()
+        .setColor(client.config.embedColor)
+        .setAuthor({ name: `${botName} • Detail Perintah`, iconURL: iconUrl })
+        .setTitle(`${catMeta.emoji} Command: /${doc.name}`)
+        .setDescription(doc.func)
+        .addFields(
+            { name: "📌 Nama Command", value: `\`/${doc.name}\``, inline: true },
+            { name: "🗂️ Kategori", value: `\`${catMeta.label.toUpperCase()}\``, inline: true },
+            { name: "🔐 Permission Dibutuhkan", value: doc.permission, inline: false },
+            { name: "⌨️ Cara Penggunaan", value: `\`${doc.usage}\``, inline: false },
+            { name: "🧩 Parameter Wajib / Opsional", value: doc.params, inline: false },
+            { name: "💡 Contoh Penggunaan", value: `\`${doc.example}\``, inline: false },
+            { name: "⚠️ Batasan Penggunaan", value: doc.limits, inline: false },
+        )
+        .setFooter({
+            text: `${botName} Help Center • Gunakan tombol di bawah untuk kembali ke kategori`,
+            iconURL: iconUrl,
+        })
+        .setTimestamp();
+}
+
+function buildHelpComponents(client, state, allDocs) {
+    const { view, sectionKey, page, totalPages, selectedCommand } = state;
+    const rows = [];
+
+    // Row 1: Category SelectMenu
+    const categoryMenu = new StringSelectMenuBuilder()
+        .setCustomId("help:category")
+        .setPlaceholder("📂 Pilih kategori perintah...")
+        .addOptions([
+            {
+                label: "Home — Ringkasan Semua Command",
+                description: "Tampilkan halaman utama & daftar singkat seluruh kategori",
+                value: "home",
+                emoji: "🏠",
+                default: view === "home",
+            },
+            {
+                label: "MUSIC — Pemutar & Kontrol Antrean",
+                description: "Play, Search, Queue, Filter, Lyrics, Volume, History, dll.",
+                value: "music",
+                emoji: "🎵",
+                default: view === "section" && sectionKey === "music",
+            },
+            {
+                label: "PLAYLIST — Playlist Pribadi, Server & Favorit",
+                description: "Manajemen /playlist & /favorite lintas server",
+                value: "playlist",
+                emoji: "📂",
+                default: view === "section" && sectionKey === "playlist",
+            },
+            {
+                label: "MUSIC SETTINGS — Autoplay, 24/7, DJ Mode",
+                description: "Konfigurasi DJ Role, Auto-Leave, Default Volume & 24/7",
+                value: "music_settings_only",
+                emoji: "⚙️",
+                default: view === "section" && sectionKey === "music_settings_only",
+            },
+            {
+                label: "CUSTOM ROLE — Role Kustom Member & Panel",
+                description: "Dashboard /customrole & panel admin /customrole-config",
+                value: "customrole",
+                emoji: "🎨",
+                default: view === "section" && sectionKey === "customrole",
+            },
+            {
+                label: "ADMIN — Server Tag, Voice Logger & Utilitas",
+                description: "Pengaturan log aktivitas, auto-role tag, statistik & sistem",
+                value: "admin",
+                emoji: "🛡️",
+                default: view === "section" && sectionKey === "admin",
+            },
+        ]);
+    rows.push(new ActionRowBuilder().addComponents(categoryMenu));
+
+    // Row 2 (when inside a category/command view): Quick Command Detail SelectMenu
+    const activeSectionDocs =
+        view === "section"
+            ? getDocsForSection(allDocs, sectionKey)
+            : view === "command" && selectedCommand
+              ? getDocsForSection(allDocs, selectedCommand.categoryKey)
+              : [];
+
+    if (activeSectionDocs.length > 0) {
+        const cmdMenu = new StringSelectMenuBuilder()
+            .setCustomId("help:command")
+            .setPlaceholder("🔎 Pilih command untuk melihat kartu detail penuh...")
+            .addOptions(
+                activeSectionDocs.slice(0, 25).map((doc) => ({
+                    label: `/${doc.name}`,
+                    description: doc.func.slice(0, 95),
+                    value: doc.name,
+                    default: view === "command" && selectedCommand?.name === doc.name,
+                })),
+            );
+        rows.push(new ActionRowBuilder().addComponents(cmdMenu));
+    }
+
+    // Row 3: Primary Category Buttons [Home] [Music] [Playlist] [Settings] [Admin]
+    const isSettingsActive = view === "section" && ["settings", "music_settings_only", "customrole"].includes(sectionKey);
+    const navButtonsRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+            .setCustomId("help:btn:home")
+            .setLabel("Home")
+            .setEmoji("🏠")
+            .setStyle(view === "home" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId("help:btn:music")
+            .setLabel("Music")
+            .setEmoji("🎵")
+            .setStyle(view === "section" && sectionKey === "music" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId("help:btn:playlist")
+            .setLabel("Playlist")
+            .setEmoji("📂")
+            .setStyle(view === "section" && sectionKey === "playlist" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId("help:btn:settings")
+            .setLabel("Settings")
+            .setEmoji("⚙️")
+            .setStyle(isSettingsActive ? ButtonStyle.Primary : ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId("help:btn:admin")
+            .setLabel("Admin")
+            .setEmoji("🛡️")
+            .setStyle(view === "section" && sectionKey === "admin" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    );
+    rows.push(navButtonsRow);
+
+    // Row 4: Pagination + [Close] (+ optional Support Server link)
+    const utilityButtons = [];
+    if (view === "section" && totalPages > 1) {
+        utilityButtons.push(
+            new ButtonBuilder()
+                .setCustomId("help:page:prev")
+                .setLabel("Prev")
+                .setEmoji("◀️")
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(page <= 0),
+            new ButtonBuilder()
+                .setCustomId("help:page:info")
+                .setLabel(`${page + 1} / ${totalPages}`)
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(true),
+            new ButtonBuilder()
+                .setCustomId("help:page:next")
+                .setLabel("Next")
+                .setEmoji("▶️")
+                .setStyle(ButtonStyle.Secondary)
+                .setDisabled(page >= totalPages - 1),
+        );
+    }
+
+    utilityButtons.push(new ButtonBuilder().setCustomId("help:btn:close").setLabel("Close").setEmoji("✖️").setStyle(ButtonStyle.Danger));
+
+    const supportUrl = typeof client?.config?.supportServerUrl === "string" ? client.config.supportServerUrl.trim() : "";
+    if (supportUrl && /^https?:\/\//i.test(supportUrl) && utilityButtons.length < 5) {
+        utilityButtons.push(new ButtonBuilder().setLabel("Support Server").setURL(supportUrl).setStyle(ButtonStyle.Link));
+    }
+
+    rows.push(new ActionRowBuilder().addComponents(utilityButtons));
+    return rows;
+}
 
 module.exports = {
     name: "help",
-    description: "Get a list of Lagukan commands",
+    description: "Buka pusat bantuan interaktif lengkap untuk seluruh slash command Lagukan",
     category: "general",
+    options: [
+        {
+            name: "command",
+            description: "Nama slash command spesifik yang ingin dilihat detailnya (opsional)",
+            type: ApplicationCommandOptionType.String,
+            required: false,
+        },
+    ],
     permissions: {
         bot: [],
         user: [],
@@ -18,48 +299,145 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction) => {
-        const botName = client.config.botName || "Lagukan";
-        const embed = new EmbedBuilder().setColor(client.config.embedColor);
-        const categories = readdirSync(path.join(__dirname, ".."));
+        const allDocs = getVerifiedCommandDocs(client);
+        const rawQuery = interaction.options?.getString?.("command")?.trim()?.replace(/^\//, "")?.toLowerCase() || "";
 
-        for (const category of categories) {
-            const commands = client.slash.filter((c) => c.category === category);
-            if (!commands.size) continue;
+        let state = {
+            view: "home",
+            sectionKey: "home",
+            page: 0,
+            totalPages: 1,
+            selectedCommand: null,
+        };
 
-            const slashCommandData = commands.map((c) => `\`${c.name}\``);
-            const categoryNames = { general: "General", music: "Music", setting: "Settings" };
-            const categoryName = categoryNames[category] || category;
-
-            embed.addFields({
-                name: `\`❯\`  ${toOppositeCase(categoryName)}`,
-                value: `${slashCommandData.join(", ")}`,
-            });
+        if (rawQuery) {
+            const matched = allDocs.find((d) => d.name.toLowerCase() === rawQuery);
+            if (matched) {
+                state = {
+                    view: "command",
+                    sectionKey: matched.categoryKey,
+                    page: 0,
+                    totalPages: 1,
+                    selectedCommand: matched,
+                };
+            }
         }
 
-        const requesterLabel = interaction.member || `<@${interaction.user.id}>`;
+        const renderPayload = () => {
+            if (state.view === "command" && state.selectedCommand) {
+                const embed = buildSingleCommandEmbed(client, state.selectedCommand);
+                return {
+                    embeds: [embed],
+                    components: buildHelpComponents(client, state, allDocs),
+                };
+            }
 
-        embed
-            .setAuthor({ name: `${botName} Music Bot - Help`, iconURL: client.user.displayAvatarURL() })
-            .setThumbnail(client.user.displayAvatarURL())
-            .setDescription(
-                `Hello **${requesterLabel}**, I'm **${botName}** (${client.user}) — **${botName} Music Bot**, a Multi-Platform Discord Music Bot supporting YouTube, YouTube Music, Spotify, SoundCloud, Deezer, Bandcamp & More. Find out what I can do using the commands below:`,
-            )
-            .setFooter({
-                text: `© ${botName} Music Bot | Total Commands: ${client.slash.size}`,
-                iconURL: client.user.displayAvatarURL(),
-            })
-            .setTimestamp();
+            if (state.view === "section") {
+                const { embed, totalPages, safePage } = buildSectionEmbed(client, state.sectionKey, state.page, allDocs);
+                state.page = safePage;
+                state.totalPages = totalPages;
+                return {
+                    embeds: [embed],
+                    components: buildHelpComponents(client, state, allDocs),
+                };
+            }
 
-        const components = buildSupportComponents(client, "Support Server");
+            state.totalPages = 1;
+            state.page = 0;
+            const embed = buildHomeEmbed(client, interaction, allDocs);
+            return {
+                embeds: [embed],
+                components: buildHelpComponents(client, state, allDocs),
+            };
+        };
 
-        return safeReply(interaction, { embeds: [embed], components });
+        const initialReply = await safeReply(interaction, {
+            ...renderPayload(),
+            withResponse: true,
+        });
+
+        const message = initialReply?.resource?.message || initialReply;
+        if (!message || typeof message.createMessageComponentCollector !== "function") {
+            return initialReply;
+        }
+
+        const collector = message.createMessageComponentCollector({ time: COLLECTOR_TIMEOUT_MS });
+        let closedManually = false;
+
+        collector.on("collect", (comp) => {
+            void (async () => {
+                if (comp.user.id !== interaction.user.id) {
+                    const notice = new EmbedBuilder()
+                        .setColor(client.config.embedColor)
+                        .setDescription("Gunakan perintah `/help` milik Anda sendiri untuk menavigasi menu bantuan.");
+                    await safeReply(comp, { embeds: [notice], flags: MessageFlags.Ephemeral });
+                    return;
+                }
+
+                const ack = await safeDeferUpdate(comp);
+                if (!ack) return;
+
+                if (comp.customId === "help:btn:close") {
+                    closedManually = true;
+                    collector.stop("closed");
+                    if (typeof interaction.deleteReply === "function") {
+                        const deleted = await interaction
+                            .deleteReply()
+                            .then(() => true)
+                            .catch(() => false);
+                        if (deleted) return;
+                    }
+                    const closedEmbed = new EmbedBuilder()
+                        .setColor(client.config.embedColor)
+                        .setDescription("✅ Menu bantuan ditutup. Ketik `/help` kapan saja untuk membukanya kembali.");
+                    await safeEditReply(interaction, { embeds: [closedEmbed], components: [] });
+                    return;
+                }
+
+                if (comp.customId === "help:category") {
+                    const chosen = comp.values?.[0] || "home";
+                    if (chosen === "home") {
+                        state = { view: "home", sectionKey: "home", page: 0, totalPages: 1, selectedCommand: null };
+                    } else {
+                        state = { view: "section", sectionKey: chosen, page: 0, totalPages: 1, selectedCommand: null };
+                    }
+                } else if (comp.customId === "help:command") {
+                    const cmdName = comp.values?.[0] || "";
+                    const found = allDocs.find((d) => d.name === cmdName);
+                    if (found) {
+                        state = {
+                            view: "command",
+                            sectionKey: found.categoryKey,
+                            page: 0,
+                            totalPages: 1,
+                            selectedCommand: found,
+                        };
+                    }
+                } else if (comp.customId.startsWith("help:btn:")) {
+                    const target = comp.customId.replace("help:btn:", "");
+                    if (target === "home") {
+                        state = { view: "home", sectionKey: "home", page: 0, totalPages: 1, selectedCommand: null };
+                    } else {
+                        state = { view: "section", sectionKey: target, page: 0, totalPages: 1, selectedCommand: null };
+                    }
+                } else if (comp.customId === "help:page:prev") {
+                    state.page = Math.max(0, state.page - 1);
+                } else if (comp.customId === "help:page:next") {
+                    state.page = Math.min(state.totalPages - 1, state.page + 1);
+                }
+
+                await safeEditReply(interaction, renderPayload());
+            })().catch(() => {});
+        });
+
+        collector.on("end", () => {
+            if (closedManually) return;
+            safeEditReply(interaction, { components: [] }).catch(() => {});
+        });
+
+        return initialReply;
     },
 };
-
-function toOppositeCase(char) {
-    if (!char) return "Commands";
-    return char.charAt(0).toUpperCase() + char.slice(1).toLowerCase();
-}
 
 /**
  * Project: Lagukan Music Bot

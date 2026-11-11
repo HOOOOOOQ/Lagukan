@@ -49,10 +49,15 @@ module.exports = async (client, player, data) => {
     }
 
     const guild = client.guilds.cache.get(player.guildId);
-    Logger.error(
-        `Player got an exception from ${guild?.name || "Unknown"} (${player.guildId}):`,
-        data?.exception?.message || data?.message || "Playback exception",
-    );
+    const errText = data?.exception?.message || data?.message || "Playback exception";
+    Logger.music("error", `Player playback exception in ${guild?.name || "Unknown"}`, {
+        guildId: player.guildId,
+        userId: player.queue?.current?.requester?.id,
+        command: "playerException",
+        playerStatus: `playing=${player.playing},paused=${player.paused}`,
+        nodeStatus: player.node?.options?.name || "Lavalink",
+        errorMessage: errText,
+    });
 
     await cleanupNowPlayingMessage(player, true);
 

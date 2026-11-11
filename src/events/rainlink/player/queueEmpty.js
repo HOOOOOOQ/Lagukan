@@ -23,6 +23,18 @@ module.exports = async (client, player) => {
         return;
     }
 
+    // Guard against Rainlink 1.2.9 emitting queueEmpty during loadFailed/cleanup when tracks remain in queue
+    if (Number(player.queue?.size || 0) > 0 || player.queue?.current) {
+        return;
+    }
+
+    // Honor explicit user Stop (/stop or [Stop] button): do not auto-restart Autoplay or auto-leave immediately
+    if (player._manualStopAt && Date.now() - player._manualStopAt < 5000) {
+        player._manualStopAt = 0;
+        await cleanupNowPlayingMessage(player, true);
+        return;
+    }
+
     await cleanupNowPlayingMessage(player, true);
 
     const channel = client.channels.cache.get(player.textId);
@@ -54,6 +66,7 @@ module.exports = async (client, player) => {
         player.queue.add(nextTrack);
 
         if (!player.playing && player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
+            player.paused = false;
             await Promise.resolve(player.play()).catch(() => {});
         }
         return;

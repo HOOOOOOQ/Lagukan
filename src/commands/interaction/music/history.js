@@ -3,8 +3,14 @@ const lodash = require("lodash");
 const { convertTime } = require("../../../functions/timeFormat.js");
 const { createPage } = require("../../../functions/createPage.js");
 const { hydrateStoredTrack } = require("../../../functions/musicSourceResolver.js");
-const { getGuildTrackHistory, clearGuildTrackHistory, getOrCreateGuildPlayer } = require("../../../functions/musicPermissions.js");
-const { refreshNowPlayingDashboard, truncateText } = require("../../../functions/nowPlayingManager.js");
+const {
+    getGuildTrackHistory,
+    clearGuildTrackHistory,
+    getOrCreateGuildPlayer,
+    isPlayerActivelyPlayingOrPausedTrack,
+    startPlayerIfIdle,
+} = require("../../../functions/musicPermissions.js");
+const { refreshNowPlayingDashboard, ensureNowPlayingDashboardVisible, truncateText } = require("../../../functions/nowPlayingManager.js");
 const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
@@ -101,10 +107,22 @@ module.exports = {
 
             const target = history[playIndex - 1];
             const track = hydrateStoredTrack(client, target, interaction.user);
+            const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
             player.queue.add(track);
 
-            if (!player.playing && !player.paused) {
-                await Promise.resolve(player.play());
+            if (!wasPlaying) {
+                const outcome = await startPlayerIfIdle(client, player, {
+                    guild: interaction.guild,
+                    userId: interaction.user?.id,
+                    command: "history_play",
+                    waitForTrackStart: true,
+                    timeoutMs: 9000,
+                });
+                if (!outcome.ok) {
+                    embed.setDescription(`❌ Could not start playback: ${outcome.error || "Unknown error"}`);
+                    return safeEditReply(interaction, { embeds: [embed] });
+                }
+                await ensureNowPlayingDashboardVisible(client, player, outcome.track || track);
             } else {
                 await refreshNowPlayingDashboard(client, player).catch(() => {});
             }

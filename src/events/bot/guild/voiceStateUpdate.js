@@ -12,7 +12,7 @@ const {
     clearInactivityTimerRef,
 } = require("../../../functions/voiceSessionManager.js");
 const { getGuildMusicSettings } = require("../../../functions/musicPermissions.js");
-const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
+const { cleanupNowPlayingMessage, refreshNowPlayingDashboard } = require("../../../functions/nowPlayingManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, oldState, newState) => {
@@ -30,11 +30,20 @@ module.exports = async (client, oldState, newState) => {
     if (!guildId) return;
 
     if (newState.channelId && newState.channel?.type == 13 && newState.guild?.members?.me?.voice?.suppress) {
-        if (
-            newState.guild.members.me.permissions.has(PermissionsBitField.Flags.Speak) ||
-            newState.channel.permissionsFor(newState.guild.members.me)?.has(PermissionsBitField.Flags.Speak)
-        ) {
-            newState.guild.members.me.voice.setSuppressed(false).catch(() => {});
+        const botVoice = newState.guild.members.me.voice;
+        botVoice.setSuppressed(false).catch(() => {
+            if (typeof botVoice.setRequestToSpeak === "function") {
+                return botVoice.setRequestToSpeak(true).catch(() => {});
+            }
+        });
+    }
+
+    // Track real-time Server Mute toggles on the bot so the dashboard warns immediately
+    if (newState.channelId && newState.member?.user?.id === client.user?.id && oldState?.serverMute !== newState?.serverMute) {
+        const activeBotPlayer = getGuildPlayer(client, guildId);
+        if (activeBotPlayer) {
+            activeBotPlayer.data?.set?.("serverMuted", Boolean(newState.serverMute));
+            refreshNowPlayingDashboard(client, activeBotPlayer).catch(() => {});
         }
     }
 

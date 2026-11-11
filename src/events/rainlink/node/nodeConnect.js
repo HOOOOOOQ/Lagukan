@@ -7,7 +7,7 @@ const {
     clearNodeReconnectTimerRef,
     syncGuildDisconnectMemory,
 } = require("../../../functions/voiceSessionManager.js");
-const { recordNodeEvent, fetchNodeCapabilities } = require("../../../functions/nodeHealthManager.js");
+const { recordNodeEvent, fetchNodeCapabilities, waitForNodeSessionReady } = require("../../../functions/nodeHealthManager.js");
 const { getGuildMusicSettings } = require("../../../functions/musicPermissions.js");
 const Logger = require("../../../utils/logger");
 
@@ -87,13 +87,16 @@ module.exports = async (client, node) => {
                             return;
                         }
 
+                        const sessionReady = await waitForNodeSessionReady(node, 4000);
+                        if (!sessionReady) return;
+
                         const musicSettings = getGuildMusicSettings(client, guild);
 
                         await client.rainlink.create({
                             guildId: guild.id,
                             voiceId: voice.id,
                             textId: text.id,
-                            shardId: guild.shardId,
+                            shardId: guild.shardId ?? client?.ws?.shards?.first?.()?.id ?? 0,
                             volume: musicSettings.defaultVolume || client.config.defaultVolume,
                             deaf: true,
                         });
