@@ -44,8 +44,10 @@ function withAutoRoleLock(guildId, userId, task) {
     return next;
 }
 
+const { isCloudDatabaseReady } = require("../databases/cloudAdapter");
+
 function isMongoReady() {
-    return mongoose.connection?.readyState === 1;
+    return mongoose.connection?.readyState === 1 || isCloudDatabaseReady();
 }
 
 function getAutoRoleModel(client) {

@@ -1,0 +1,10 @@
+{
+    "version": 2,
+    "buildCommand": "npm run build",
+    "outputDirectory": "public-build",
+    "rewrites": [
+        { "source": "/api/(.*)", "destination": "/api/index.js" },
+        { "source": "/install.sh", "destination": "/api/index.js" },
+        { "source": "/((?!assets/|favicon\\.svg).*)", "destination": "/index.html" }
+    ]
+}
