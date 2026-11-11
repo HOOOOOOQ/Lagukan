@@ -1,9 +1,10 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { refreshNowPlayingDashboard } = require("../../../functions/nowPlayingManager.js");
 const { safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "loop",
-    description: "Toggle Lagukan loop mode",
+    description: "Toggle Lagukan loop mode (off, song, or queue)",
     category: "music",
     options: [
         {
@@ -26,25 +27,18 @@ module.exports = {
         voice: true,
         player: true,
         current: true,
+        dj: true,
     },
     devOnly: false,
     run: async (client, interaction, player) => {
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
         const mode = interaction.options.getString("mode");
 
-        switch (mode) {
-            case "none":
-                embed.setDescription(`Loop mode has been set to \`off\`.`);
-                break;
-            case "song":
-                embed.setDescription(`Loop mode has been set to \`song\`.`);
-                break;
-            case "queue":
-                embed.setDescription(`Loop mode has been set to \`queue\`.`);
-                break;
-        }
-
         player.setLoop(mode);
+        await refreshNowPlayingDashboard(client, player);
+
+        const label = mode === "none" ? "off" : mode;
+        embed.setDescription(`Loop mode has been set to \`${label}\`.`);
 
         return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     },

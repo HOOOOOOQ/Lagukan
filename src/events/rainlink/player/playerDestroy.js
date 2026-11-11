@@ -4,6 +4,8 @@ const {
     hasActiveGuildPlayer,
     prepareGuildForReconnect,
 } = require("../../../functions/voiceSessionManager.js");
+const { getGuildMusicSettings } = require("../../../functions/musicPermissions.js");
+const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, player) => {
@@ -19,10 +21,7 @@ module.exports = async (client, player) => {
             Logger.debug(`Player destroyed from [${guild.name}] (${guild.id})`);
         }
 
-        if (player.message) {
-            player.message.delete().catch(() => {});
-            player.message = null;
-        }
+        await cleanupNowPlayingMessage(player, true);
 
         // Never auto-reconnect if this guild was intentionally disconnected via /leave
         if (!guild || isGuildManuallyDisconnected(client, guildId) || isGuildLeavingInProgress(guildId)) {
@@ -63,13 +62,15 @@ module.exports = async (client, player) => {
                 return;
             }
 
+            const musicSettings = getGuildMusicSettings(client, guild);
+
             return await client.rainlink
                 .create({
                     guildId: guild.id,
                     voiceId: voice.id,
                     textId: text.id,
                     shardId: guild.shardId,
-                    volume: client.config.defaultVolume,
+                    volume: musicSettings.defaultVolume || client.config.defaultVolume,
                     deaf: true,
                 })
                 .catch((err) => {

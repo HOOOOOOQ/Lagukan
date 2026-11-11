@@ -1,6 +1,6 @@
 const { ActivityType } = require("discord.js");
 const emojiConfig = require("../../../settings/emoji.js");
-const { normalizeGuildData } = require("../../../functions/createData.js");
+const { normalizeGuildData, normalizeUserData } = require("../../../functions/createData.js");
 const { syncGuildDisconnectMemory } = require("../../../functions/voiceSessionManager.js");
 const { initializeServerTagLogger } = require("../../../functions/serverTagLogger.js");
 const { initializeServerTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
@@ -52,7 +52,7 @@ module.exports = async (client) => {
     userData.forEach(async (x) => {
         const { _id, __v, ...data } = x.toObject();
 
-        client.data.set(`userData_${x.id}`, data);
+        client.data.set(`userData_${x.id}`, normalizeUserData(x.id, data));
     });
 
     initializeServerTagLogger(client).catch((err) => {

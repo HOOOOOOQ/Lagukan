@@ -7,12 +7,26 @@ const {
     clearNodeReconnectTimerRef,
     syncGuildDisconnectMemory,
 } = require("../../../functions/voiceSessionManager.js");
+const { recordNodeEvent, fetchNodeCapabilities } = require("../../../functions/nodeHealthManager.js");
+const { getGuildMusicSettings } = require("../../../functions/musicPermissions.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, node) => {
     try {
         const nodeName = node?.options?.name || "Lavalink";
+        recordNodeEvent(node, "connect");
         Logger.info(`Node ${nodeName} ready`);
+
+        // Probe node /v4/info in background to cache supported sources, plugins, and filters
+        fetchNodeCapabilities(node, true)
+            .then((caps) => {
+                if (caps) {
+                    Logger.debug(
+                        `[NodeConnect] ${nodeName} v${caps.version} sources=[${caps.sourceManagers.join(", ")}] plugins=[${caps.plugins.map((p) => p.name).join(", ")}]`,
+                    );
+                }
+            })
+            .catch(() => {});
 
         const guildDatas = (await client.guildData?.find?.().catch(() => [])) || [];
 
@@ -73,12 +87,14 @@ module.exports = async (client, node) => {
                             return;
                         }
 
+                        const musicSettings = getGuildMusicSettings(client, guild);
+
                         await client.rainlink.create({
                             guildId: guild.id,
                             voiceId: voice.id,
                             textId: text.id,
                             shardId: guild.shardId,
-                            volume: client.config.defaultVolume,
+                            volume: musicSettings.defaultVolume || client.config.defaultVolume,
                             deaf: true,
                         });
                     } catch (err) {

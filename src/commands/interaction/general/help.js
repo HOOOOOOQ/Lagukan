@@ -42,7 +42,7 @@ module.exports = {
             .setAuthor({ name: `${botName} Music Bot - Help`, iconURL: client.user.displayAvatarURL() })
             .setThumbnail(client.user.displayAvatarURL())
             .setDescription(
-                `Hello **${requesterLabel}**, I'm **${botName}** (${client.user}) — **${botName} Music Bot**, a Rich Quality Discord Music Bot supporting Spotify, SoundCloud, Apple Music & Others. Find out what I can do using the commands below:`,
+                `Hello **${requesterLabel}**, I'm **${botName}** (${client.user}) — **${botName} Music Bot**, a Multi-Platform Discord Music Bot supporting YouTube, YouTube Music, Spotify, SoundCloud, Deezer, Bandcamp & More. Find out what I can do using the commands below:`,
             )
             .setFooter({
                 text: `© ${botName} Music Bot | Total Commands: ${client.slash.size}`,
