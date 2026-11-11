@@ -1,18 +1,29 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
-const { convertTime } = require("../../../functions/timeFormat.js");
-const { getGuildPlayer, cleanupStalePlayerIfDisconnected, clearManualDisconnect } = require("../../../functions/voiceSessionManager.js");
+const { cleanupStalePlayerIfDisconnected } = require("../../../functions/voiceSessionManager.js");
+const { checkSearchRateLimit, smartSearch } = require("../../../functions/musicSourceResolver.js");
+const {
+    enqueueSingleTrackAndRespond,
+    enqueuePlaylistAndRespond,
+    presentSearchSelectMenu,
+} = require("../../../functions/searchSelector.js");
 const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "play",
-    description: "Play a song or playlist with Lagukan",
+    description: "Play a song, playlist, or multi-platform link with Lagukan",
     category: "music",
     options: [
         {
             name: "query",
-            description: "Provide a song name or url",
+            description: "Song title, artist, or URL (YouTube, Spotify, SoundCloud, Deezer, Bandcamp, Direct Audio)",
             type: 3,
             required: true,
+        },
+        {
+            name: "direct",
+            description: "Play the top search match immediately without showing the selection menu",
+            type: 5,
+            required: false,
         },
     ],
     permissions: {
@@ -29,11 +40,18 @@ module.exports = {
         const botName = client.config.botName || "Lagukan";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
+        const rateCheck = checkSearchRateLimit(interaction.user?.id);
+        if (!rateCheck.allowed) {
+            embed.setDescription(
+                `You are searching too fast. Please wait \`${Math.ceil(rateCheck.retryAfterMs / 1000)}s\` before trying again.`,
+            );
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+        }
+
         player = (await cleanupStalePlayerIfDisconnected(client, interaction.guild)) || null;
 
         if (player && player.voiceId !== interaction.member.voice.channelId) {
             embed.setDescription(`You must be in the same voice channel as ${botName}.`);
-
             return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
@@ -41,55 +59,28 @@ module.exports = {
         if (!deferred) return;
 
         const query = interaction.options.getString("query");
-        const result = await client.rainlink.search(query, {
-            requester: interaction.member,
-            sourceID: client.config.lavalinkSource,
+        const directPlay = Boolean(interaction.options.getBoolean("direct"));
+
+        const result = await smartSearch(client, query, {
+            requester: interaction.user,
         });
 
-        if (!result || result.type === "EMPTY" || result.type === "ERROR" || !result.tracks?.length) {
-            embed.setDescription(`No results found for your query.`);
-
+        if (!result || !Array.isArray(result.tracks) || result.tracks.length === 0) {
+            embed.setDescription(result?.error || "No results found for your query.");
             return safeEditReply(interaction, { embeds: [embed] });
         }
 
-        await clearManualDisconnect(client, interaction.guildId, interaction.guild);
-
-        player = getGuildPlayer(client, interaction.guildId);
-        if (!player) {
-            player = await client.rainlink.create({
-                guildId: interaction.guildId,
-                textId: interaction.channelId,
-                voiceId: interaction.member.voice.channelId,
-                shardId: interaction.guild.shardId,
-                volume: client.config.defaultVolume,
-                deaf: true,
-            });
-        }
-
         if (result.type === "PLAYLIST") {
-            for (const track of result.tracks) player.queue.add(track);
-
-            embed.setDescription(`Added **[${result.playlistName}](${query})** - \`${result.tracks.length}\` songs to the queue.`);
-        } else {
-            const track = result.tracks[0];
-            const trackTitle = formatString(track.title || "Unknown", 30).replace(/ - Topic$/, "") || "Unknown";
-            const trackAuthor = formatString(track.author || "Unknown", 25).replace(/ - Topic$/, "") || "Unknown";
-
-            player.queue.add(track);
-
-            embed.setDescription(`Added **[${trackTitle} - ${trackAuthor}](${track.uri})** - \`${convertTime(track.duration)}\`.`);
+            return enqueuePlaylistAndRespond(client, interaction, result);
         }
 
-        await safeEditReply(interaction, { embeds: [embed] });
-        if (!player.playing) {
-            await player.play();
+        if (result.detectedType === "text" && result.tracks.length > 1 && !directPlay) {
+            return presentSearchSelectMenu(client, interaction, query, result.tracks);
         }
+
+        return enqueueSingleTrackAndRespond(client, interaction, result.tracks[0]);
     },
 };
-
-function formatString(str, maxLength) {
-    return str.length > maxLength ? str.substr(0, maxLength - 3) + "..." : str;
-}
 
 /**
  * Project: Lagukan Music Bot

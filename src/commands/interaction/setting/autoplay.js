@@ -1,9 +1,11 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
-const { safeReply } = require("../../../functions/interactionResponder.js");
+const { isGuildAutoplayEnabled, setGuildAutoplay } = require("../../../functions/musicPermissions.js");
+const { refreshNowPlayingDashboard } = require("../../../functions/nowPlayingManager.js");
+const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "autoplay",
-    description: "Toggle Lagukan autoplay mode",
+    description: "Toggle Lagukan smart autoplay recommendations for this server",
     category: "setting",
     permissions: {
         bot: [],
@@ -11,41 +13,31 @@ module.exports = {
     },
     settings: {
         voice: true,
-        player: true,
-        current: true,
+        player: false,
+        current: false,
+        dj: true,
     },
     devOnly: false,
     run: async (client, interaction, player) => {
-        const embed = new EmbedBuilder().setColor(client.config.embedColor);
-        const track = player.queue.isEmpty ? player.queue.current : player.queue[player.queue.size - 1];
+        const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+        if (!deferred) return;
 
-        if (!isYoutube(track)) {
-            embed.setDescription(
-                `${player.queue.isEmpty ? "The current song platform is not supported" : "The last queue platform is not supported"}. Autoplay mode can only be used with YouTube.`,
+        const currentStatus = isGuildAutoplayEnabled(client, interaction.guildId);
+        const nextStatus = await setGuildAutoplay(client, interaction.guild, !currentStatus);
+
+        if (player) {
+            await refreshNowPlayingDashboard(client, player);
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor(client.config.embedColor)
+            .setDescription(
+                nextStatus ? "Smart Autoplay is now `enabled` for this server." : "Smart Autoplay is now `disabled` for this server.",
             );
 
-            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
-        }
-
-        const autoplay = client.data.get("autoplay", player.guildId);
-
-        if (autoplay) {
-            client.data.delete("autoplay", player.guildId);
-
-            embed.setDescription(`Autoplay mode is now \`disabled\``);
-        } else {
-            client.data.set("autoplay", player.guildId);
-
-            embed.setDescription(`Autoplay mode is now \`enabled\``);
-        }
-
-        return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+        return safeEditReply(interaction, { embeds: [embed] });
     },
 };
-
-function isYoutube(track) {
-    return track?.source === "youtube";
-}
 
 /**
  * Project: Lagukan Music Bot

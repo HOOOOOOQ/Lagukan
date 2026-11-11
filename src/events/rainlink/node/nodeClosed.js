@@ -1,7 +1,9 @@
+const { recordNodeEvent } = require("../../../functions/nodeHealthManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = (client, node) => {
-    Logger.warn(`Node ${node.options.name} closed`);
+    recordNodeEvent(node, "closed");
+    Logger.warn(`Node ${node?.options?.name || "Lavalink"} closed after reaching bounded retry limit`);
 };
 
 /**

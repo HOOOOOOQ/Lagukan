@@ -4,6 +4,13 @@ const {
     isGuildManuallyDisconnected,
     isGuildLeavingInProgress,
 } = require("../../../functions/voiceSessionManager.js");
+const {
+    isGuildAutoplayEnabled,
+    setGuildAutoplay,
+    findAutoplayRecommendation,
+    getGuildMusicSettings,
+} = require("../../../functions/musicPermissions.js");
+const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
 
 module.exports = async (client, player) => {
     if (
@@ -16,26 +23,13 @@ module.exports = async (client, player) => {
         return;
     }
 
-    if (player.message) {
-        player.message.delete().catch(() => {});
-        player.message = null;
-    }
+    await cleanupNowPlayingMessage(player, true);
 
     const channel = client.channels.cache.get(player.textId);
-    const isAutoplayEnabled = client.data.get("autoplay", player.guildId);
+    const autoplayEnabled = isGuildAutoplayEnabled(client, player.guildId);
 
-    if (isAutoplayEnabled) {
-        const track = player.queue.previous[0];
-        if (!track) {
-            client.data.delete("autoplay", player.guildId);
-            if (player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
-                await Promise.resolve(player.destroy()).catch(() => {});
-            }
-            return;
-        }
-
-        const getTrack = `https://music.youtube.com/watch?v=${track.identifier}&list=RD${track.identifier}`;
-        const result = await client.rainlink.search(getTrack, { requester: track.requester }).catch(() => null);
+    if (autoplayEnabled) {
+        const nextTrack = await findAutoplayRecommendation(client, player);
 
         if (
             isGuildManuallyDisconnected(client, player.guildId) ||
@@ -46,8 +40,10 @@ module.exports = async (client, player) => {
             return;
         }
 
-        if (!result || !result.tracks || !result.tracks.length) {
-            client.data.delete("autoplay", player.guildId);
+        if (!nextTrack) {
+            await setGuildAutoplay(client, player.guildId, false);
+            const guildData = client.data.get(`guildData_${player.guildId}`);
+            if (guildData && !guildData.manualDisconnect && guildData.reconnect?.status) return;
 
             if (player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
                 await Promise.resolve(player.destroy()).catch(() => {});
@@ -55,27 +51,36 @@ module.exports = async (client, player) => {
             return;
         }
 
-        const randomTrack = result.tracks[Math.floor(Math.random() * result.tracks.length)];
-
-        player.queue.add(randomTrack);
+        player.queue.add(nextTrack);
 
         if (!player.playing && player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
             await Promise.resolve(player.play()).catch(() => {});
         }
-    } else {
-        const guildData = client.data.get(`guildData_${player.guildId}`);
+        return;
+    }
 
-        if (guildData && !guildData.manualDisconnect && guildData.reconnect?.status) return;
+    const guildData = client.data.get(`guildData_${player.guildId}`);
+    if (guildData && !guildData.manualDisconnect && guildData.reconnect?.status) {
+        return;
+    }
 
-        const embed = new EmbedBuilder()
+    const musicSettings = getGuildMusicSettings(client, player.guildId);
+    if (musicSettings?.autoLeave?.enabled === false) {
+        const stayEmbed = new EmbedBuilder()
             .setColor(client.config.embedColor)
-            .setDescription(`The queue is empty. You can disable this by using \`247\` command.`);
+            .setDescription("Queue has finished. Staying in voice channel because Auto-Leave is disabled.");
+        if (channel) await channel.send({ embeds: [stayEmbed] }).catch(() => {});
+        return;
+    }
 
-        if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
+    const embed = new EmbedBuilder()
+        .setColor(client.config.embedColor)
+        .setDescription("The queue is empty. Leaving voice channel (use `/247` or `/musicconfig` to stay connected).");
 
-        if (player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
-            await Promise.resolve(player.destroy()).catch(() => {});
-        }
+    if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
+
+    if (player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
+        await Promise.resolve(player.destroy()).catch(() => {});
     }
 };
 

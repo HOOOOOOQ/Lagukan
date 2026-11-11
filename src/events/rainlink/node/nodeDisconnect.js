@@ -1,7 +1,9 @@
+const { recordNodeEvent } = require("../../../functions/nodeHealthManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = (client, node, code, reason) => {
-    Logger.warn(`Node ${node.options.name} disconnected`, code, reason);
+    recordNodeEvent(node, "disconnect", `${code || ""} ${reason || ""}`.trim());
+    Logger.warn(`Node ${node?.options?.name || "Lavalink"} disconnected (code=${code ?? "unknown"})`);
 };
 
 /**

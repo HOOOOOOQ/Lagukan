@@ -1,17 +1,18 @@
-const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { EmbedBuilder, MessageFlags, PermissionsBitField } = require("discord.js");
 const { getGuildPlayer, performManualLeave } = require("../../../functions/voiceSessionManager.js");
+const { checkDjAccess } = require("../../../functions/musicPermissions.js");
 const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "leave",
-    description: "Make Lagukan leave the voice channel",
+    description: "Disconnect Lagukan from the voice channel and stop Auto Reconnect",
     category: "music",
     permissions: {
         bot: [],
-        user: ["ManageGuild"],
+        user: [],
     },
     settings: {
-        voice: true,
+        voice: false,
         player: false,
         current: false,
     },
@@ -24,14 +25,32 @@ module.exports = {
         const guildData = client.data.get(`guildData_${interaction.guildId}`);
 
         if (!activePlayer && !botVoiceId && !guildData?.reconnect?.status) {
-            embed.setDescription(`There is no active player in this server.`);
-
+            embed.setDescription("There is no active player in this server.");
             return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
-        if (botVoiceId && interaction.member?.voice?.channelId !== botVoiceId) {
-            embed.setDescription(`You need to be in the same voice channel as ${botName}.`);
+        const isAdmin = Boolean(
+            interaction.memberPermissions?.has?.(PermissionsBitField.Flags.ManageGuild) ||
+            interaction.memberPermissions?.has?.(PermissionsBitField.Flags.Administrator),
+        );
 
+        if (botVoiceId && !isAdmin && interaction.member?.voice?.channelId !== botVoiceId) {
+            embed.setDescription(`You need to be in the same voice channel as ${botName}.`);
+            return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
+        }
+
+        const djCheck = checkDjAccess(client, {
+            guild: interaction.guild,
+            member: interaction.member,
+            user: interaction.user,
+            player: activePlayer,
+            track: activePlayer?.queue?.current || null,
+            allowRequester: false,
+            interaction,
+        });
+
+        if (!djCheck.allowed) {
+            embed.setDescription(djCheck.reason);
             return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
@@ -40,7 +59,7 @@ module.exports = {
 
         await performManualLeave(client, interaction.guild, activePlayer);
 
-        embed.setDescription(`Leaving voice channel...`);
+        embed.setDescription("Disconnected from the voice channel. Auto-reconnect has been stopped.");
 
         return safeEditReply(interaction, { embeds: [embed] });
     },

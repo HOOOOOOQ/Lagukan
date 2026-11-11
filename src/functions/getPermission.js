@@ -2,6 +2,7 @@ const { EmbedBuilder, MessageFlags, PermissionsBitField } = require("discord.js"
 const Logger = require("../utils/logger");
 const { safeReply, isUnknownInteractionError, isAlreadyAcknowledgedError } = require("./interactionResponder.js");
 const { getGuildPlayer } = require("./voiceSessionManager.js");
+const { checkDjAccess } = require("./musicPermissions.js");
 
 function resolveMemberPermissions(response) {
     if (response?.memberPermissions && typeof response.memberPermissions.has === "function") {
@@ -93,6 +94,24 @@ module.exports = {
         if (command.settings.current) {
             if (!player || !player.queue.current) {
                 embed.setDescription(`There is no song currently playing in this server.`);
+
+                return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
+            }
+        }
+
+        if (command.settings.dj) {
+            const djResult = checkDjAccess(client, {
+                guild: response.guild,
+                member: response.member,
+                user: response.user || response.author,
+                player,
+                track: player?.queue?.current || null,
+                allowRequester: Boolean(command.settings.allowRequester),
+                interaction: response,
+            });
+
+            if (!djResult.allowed) {
+                embed.setDescription(djResult.reason);
 
                 return safeReply(response, { embeds: [embed], flags: MessageFlags.Ephemeral });
             }

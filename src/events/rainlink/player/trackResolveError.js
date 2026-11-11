@@ -4,6 +4,8 @@ const {
     isGuildManuallyDisconnected,
     isGuildLeavingInProgress,
 } = require("../../../functions/voiceSessionManager.js");
+const { recordPlaybackFailure } = require("../../../functions/nodeHealthManager.js");
+const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, player, track, message) => {
@@ -18,29 +20,31 @@ module.exports = async (client, player, track, message) => {
     }
 
     const guild = client.guilds.cache.get(player.guildId);
+    Logger.error(`Song resolve error from ${guild?.name || "Unknown"} (${player.guildId}):`, message);
 
-    Logger.error(`Song error from ${guild?.name || "Unknown"} (${player.guildId})`, message);
+    await cleanupNowPlayingMessage(player, true);
 
-    if (player.message) {
-        player.message.delete().catch(() => {});
-        player.message = null;
-    }
-
+    const breaker = recordPlaybackFailure(player.guildId);
     const channel = client.channels.cache.get(player.textId);
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
-    if (!player.queue.isEmpty) {
-        embed.setDescription(`Song got an error. Skipping to the next song...`);
-
+    if (breaker.tripped) {
+        player.queue.clear();
+        embed.setDescription("Too many consecutive tracks failed to resolve. Queue has been stopped safely.");
         if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
-    } else {
-        embed.setDescription(`Song got an error and the queue is empty. Stopping the player...`);
-
-        if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
+        if (player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
+            await Promise.resolve(player.stop()).catch(() => {});
+        }
+        return;
     }
 
-    if (player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
-        await Promise.resolve(player.skip()).catch(() => {});
+    // Note: RainlinkPlayer#play() automatically advances to the next track or emits queueEmpty on trackResolveError
+    if (!player.queue.isEmpty) {
+        embed.setDescription(`Could not resolve audio for **${track?.title || "track"}**. Advancing to the next song...`);
+        if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
+    } else {
+        embed.setDescription(`Could not resolve audio for **${track?.title || "track"}** and queue is empty.`);
+        if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
     }
 };
 

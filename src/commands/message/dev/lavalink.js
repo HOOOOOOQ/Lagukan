@@ -1,5 +1,6 @@
 const { EmbedBuilder } = require("discord.js");
 const { createPage } = require("../../../functions/createPage.js");
+const { fetchNodeCapabilities, scoreNodeHealth } = require("../../../functions/nodeHealthManager.js");
 const lodash = require("lodash");
 const Logger = require("../../../utils/logger");
 
@@ -18,7 +19,7 @@ module.exports = {
         current: false,
     },
     devOnly: true,
-    run: async (client, message, player, args) => {
+    run: async (client, message) => {
         const ms = (await import("pretty-ms")).default;
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
@@ -31,37 +32,45 @@ module.exports = {
                 return message.reply({ embeds: [embed] });
             }
 
-            const nodeInfo = nodes.map((node) => {
-                const online = node.online ? "Online" : "Offline";
-                const { players, playingPlayers: playing, uptime, memory, cpu } = node.stats;
-                const formattedUptime = ms(uptime, { compact: true });
+            const nodeInfoList = await Promise.all(
+                nodes.map(async (node) => {
+                    const online = node.online ? "Online" : "Offline";
+                    const { players, playingPlayers: playing, uptime, memory, cpu } = node.stats;
+                    const formattedUptime = ms(uptime || 0, { compact: true });
+                    const caps = await fetchNodeCapabilities(node).catch(() => null);
+                    const score = scoreNodeHealth(node);
 
-                const nodeInfo = {
-                    name: node.options.name,
-                    host: node.options.host,
-                    port: node.options.port,
-                    auth: node.options.auth,
-                    secure: node.options.secure,
-                    driver: node.options.driver,
-                };
+                    const nodeMeta = {
+                        name: node.options.name,
+                        host: node.options.host,
+                        port: node.options.port,
+                        auth: "[REDACTED]",
+                        secure: node.options.secure,
+                        driver: node.options.driver,
+                        version: caps?.version || "unknown",
+                        sources: caps?.sourceManagers?.length ? caps.sourceManagers.join(", ") : "unknown",
+                        plugins: caps?.plugins?.length ? caps.plugins.map((p) => `${p.name}@${p.version}`).join(", ") : "none",
+                        healthScore: Number.isFinite(score) ? score.toFixed(1) : "offline",
+                    };
 
-                const memoryInfo = {
-                    used: (memory.used / 1024 / 1024).toFixed(2),
-                    free: (memory.free / 1024 / 1024).toFixed(2),
-                    allocated: (memory.allocated / 1024 / 1024).toFixed(2),
-                    reservable: (memory.reservable / 1024 / 1024).toFixed(2),
-                };
+                    const memoryInfo = {
+                        used: (memory.used / 1024 / 1024).toFixed(2),
+                        free: (memory.free / 1024 / 1024).toFixed(2),
+                        allocated: (memory.allocated / 1024 / 1024).toFixed(2),
+                        reservable: (memory.reservable / 1024 / 1024).toFixed(2),
+                    };
 
-                const cpuInfo = {
-                    cores: cpu.cores,
-                    systemLoad: (cpu.systemLoad * 100).toFixed(2),
-                    lavalinkLoad: (cpu.lavalinkLoad * 100).toFixed(2),
-                };
+                    const cpuInfo = {
+                        cores: cpu.cores,
+                        systemLoad: (cpu.systemLoad * 100).toFixed(2),
+                        lavalinkLoad: (cpu.lavalinkLoad * 100).toFixed(2),
+                    };
 
-                return formatNodeInfo(nodeInfo, online, players, playing, formattedUptime, memoryInfo, cpuInfo);
-            });
+                    return formatNodeInfo(nodeMeta, online, players, playing, formattedUptime, memoryInfo, cpuInfo);
+                }),
+            );
 
-            const pages = lodash.chunk(nodeInfo, 1).map((s) => s.join(""));
+            const pages = lodash.chunk(nodeInfoList, 1).map((s) => s.join(""));
 
             return createPage(client, message, embed, pages);
         } catch (error) {
@@ -82,19 +91,23 @@ function formatNodeInfo(nodeInfo, online, players, playing, formattedUptime, mem
   - Auth: ${nodeInfo.auth}
   - Secure: ${nodeInfo.secure}
   - Driver: ${nodeInfo.driver}
-  
+  - Version: ${nodeInfo.version}
+  - Sources: ${nodeInfo.sources}
+  - Plugins: ${nodeInfo.plugins}
+
 - Status Info
   - Connection: ${online}
+  - Health Score: ${nodeInfo.healthScore}
   - Players: ${players}
   - Playing: ${playing}
   - Uptime: ${formattedUptime}
-  
+
 - Memory Info
   - Used: ${memoryInfo.used}MB
   - Free: ${memoryInfo.free}MB
   - Allocated: ${memoryInfo.allocated}MB
   - Reservable: ${memoryInfo.reservable}MB
-  
+
 - CPU Info
   - Cores: ${cpuInfo.cores}
   - System Load: ${cpuInfo.systemLoad}%

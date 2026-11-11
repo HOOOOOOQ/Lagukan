@@ -11,6 +11,8 @@ const {
     registerInactivityTimer,
     clearInactivityTimerRef,
 } = require("../../../functions/voiceSessionManager.js");
+const { getGuildMusicSettings } = require("../../../functions/musicPermissions.js");
+const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, oldState, newState) => {
@@ -63,6 +65,14 @@ module.exports = async (client, oldState, newState) => {
         return;
     }
 
+    const musicSettings = getGuildMusicSettings(client, guildId);
+    if (musicSettings?.autoLeave?.enabled === false) {
+        cancelInactivityTimer(guildId);
+        return;
+    }
+
+    const autoLeaveTimeoutMs = Number(musicSettings?.autoLeave?.timeout) || client.config.leaveTimeout || 60000;
+
     const oldStatePlayer = getGuildPlayer(client, guildId);
 
     if (!oldStatePlayer || oldStatePlayer.state === PLAYER_STATE_DESTROYED || oldStatePlayer.sudoDestroy) {
@@ -96,6 +106,11 @@ module.exports = async (client, oldState, newState) => {
                             return;
                         }
 
+                        const latestMusicSettings = getGuildMusicSettings(client, guildId);
+                        if (latestMusicSettings?.autoLeave?.enabled === false) {
+                            return;
+                        }
+
                         const currentPlayer = getGuildPlayer(client, guildId);
                         if (
                             !currentPlayer ||
@@ -111,11 +126,7 @@ module.exports = async (client, oldState, newState) => {
                         const stillNotPlaying = !currentPlayer.playing && !currentPlayer.queue.current;
 
                         if (stillBotAlone || stillNotPlaying) {
-                            if (currentPlayer.message) {
-                                const prevMsg = currentPlayer.message;
-                                currentPlayer.message = null;
-                                await prevMsg.delete().catch(() => {});
-                            }
+                            await cleanupNowPlayingMessage(currentPlayer, true);
 
                             await Promise.resolve(currentPlayer.destroy()).catch(() => {});
 
@@ -142,7 +153,7 @@ module.exports = async (client, oldState, newState) => {
                 })().catch((err) => {
                     Logger.debug(`[VoiceStateUpdate] Penanganan error timer inaktivitas (${guildId}): ${err?.message || err}`);
                 });
-            }, client.config.leaveTimeout);
+            }, autoLeaveTimeoutMs);
 
             if (typeof timer.unref === "function") timer.unref();
             registerInactivityTimer(guildId, timer);

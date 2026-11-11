@@ -3,6 +3,7 @@ const { ClusterClient, getInfo } = require("discord-hybrid-sharding");
 const { Rainlink, Library } = require("rainlink");
 const config = require("../settings/config.js");
 const { attachAutoRoleGatewayListener } = require("../functions/serverTagAutoRole.js");
+const { initializeNodeHealthManager } = require("../functions/nodeHealthManager.js");
 const Logger = require("../utils/logger");
 
 class LagukanClient extends Client {
@@ -38,6 +39,7 @@ class LagukanClient extends Client {
         this.serverTagAutoRoleData = require("../databases/schema/serverTagAutoRole.js");
         this.customRoleData = require("../databases/schema/customRole.js");
         this.customRoleConfigData = require("../databases/schema/customRoleConfig.js");
+        this.playlistData = require("../databases/schema/playlist.js");
         this.serverMembersIntentFallback = false;
         this.prefix = new Collection();
         this.aliases = new Collection();
@@ -50,6 +52,8 @@ class LagukanClient extends Client {
             plugins: this.config.rainlinkPlugins,
             options: this.config.rainlinkOptions,
         });
+
+        initializeNodeHealthManager(this);
 
         if (!this.token) this.token = this.config.token;
 

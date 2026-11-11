@@ -298,6 +298,15 @@ async function performManualLeave(client, guild, player = null) {
         // 3. Stop playback, clear queue/loop, delete Now Playing message, and destroy Rainlink player
         const activePlayer = player || client?.rainlink?.players?.get?.(gId) || null;
         if (activePlayer) {
+            if (activePlayer._npCollector) {
+                try {
+                    activePlayer._npCollector.stop("manual_leave");
+                } catch {
+                    // Ignore collector stop error
+                }
+                activePlayer._npCollector = null;
+            }
+
             if (activePlayer.message) {
                 const oldMsg = activePlayer.message;
                 activePlayer.message = null;

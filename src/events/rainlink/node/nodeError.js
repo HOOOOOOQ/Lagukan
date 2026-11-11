@@ -1,7 +1,9 @@
+const { recordNodeEvent } = require("../../../functions/nodeHealthManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = (client, node, error) => {
-    Logger.error(`Node ${node.options.name} error`, error);
+    recordNodeEvent(node, "error", error);
+    Logger.error(`Node ${node?.options?.name || "Lavalink"} error:`, error?.message || error);
 };
 
 /**

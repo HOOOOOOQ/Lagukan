@@ -1,5 +1,6 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
-const { cleanupStalePlayerIfDisconnected, clearManualDisconnect } = require("../../../functions/voiceSessionManager.js");
+const { cleanupStalePlayerIfDisconnected } = require("../../../functions/voiceSessionManager.js");
+const { getOrCreateGuildPlayer } = require("../../../functions/musicPermissions.js");
 const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
@@ -7,8 +8,8 @@ module.exports = {
     description: "Make Lagukan join your voice channel",
     category: "music",
     permissions: {
-        bot: [],
-        user: [],
+        bot: ["Connect", "Speak"],
+        user: ["Connect"],
     },
     settings: {
         voice: true,
@@ -22,24 +23,23 @@ module.exports = {
         player = (await cleanupStalePlayerIfDisconnected(client, interaction.guild)) || null;
 
         if (player) {
-            embed.setDescription(`Already joined a voice channel.`);
-
+            embed.setDescription(`Already joined <#${player.voiceId}>.`);
             return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
         if (!deferred) return;
 
-        await clearManualDisconnect(client, interaction.guildId, interaction.guild);
-
-        player = await client.rainlink.create({
-            guildId: interaction.guildId,
-            textId: interaction.channelId,
-            voiceId: interaction.member.voice.channelId,
-            shardId: interaction.guild.shardId,
-            volume: client.config.defaultVolume,
-            deaf: true,
-        });
+        try {
+            await getOrCreateGuildPlayer(client, {
+                guild: interaction.guild,
+                voiceChannelId: interaction.member.voice.channelId,
+                textChannelId: interaction.channelId,
+            });
+        } catch (err) {
+            embed.setDescription(err?.message || "Could not connect to voice channel right now.");
+            return safeEditReply(interaction, { embeds: [embed] });
+        }
 
         embed.setDescription(`Joined ${interaction.member.voice.channel}.`);
 

@@ -4,7 +4,38 @@ const {
     isGuildManuallyDisconnected,
     isGuildLeavingInProgress,
 } = require("../../../functions/voiceSessionManager.js");
+const { recordPlaybackFailure } = require("../../../functions/nodeHealthManager.js");
+const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
 const Logger = require("../../../utils/logger");
+
+async function tryAlternateSourceFallback(client, player) {
+    const failedTrack = player?.queue?.current;
+    if (!failedTrack || failedTrack._playbackFallbackTried) return false;
+
+    failedTrack._playbackFallbackTried = true;
+    const cleanTitle = String(failedTrack.title || "").trim();
+    const cleanAuthor = String(failedTrack.author || "")
+        .replace(/ - Topic$/i, "")
+        .trim();
+    if (!cleanTitle) return false;
+
+    const query = [cleanAuthor, cleanTitle].filter(Boolean).join(" - ");
+    const altEngines = ["soundcloud", "youtubeMusic", "youtube"].filter(
+        (eng) => eng.toLowerCase() !== String(failedTrack.source || "").toLowerCase(),
+    );
+
+    for (const engine of altEngines.slice(0, 2)) {
+        const res = await client.rainlink.search(query, { requester: failedTrack.requester, engine }).catch(() => null);
+        const backup = res?.tracks?.[0];
+        if (backup?.encoded) {
+            backup._playbackFallbackTried = true;
+            await Promise.resolve(player.play(backup, { replaceCurrent: true })).catch(() => {});
+            return true;
+        }
+    }
+
+    return false;
+}
 
 module.exports = async (client, player, data) => {
     if (
@@ -18,24 +49,37 @@ module.exports = async (client, player, data) => {
     }
 
     const guild = client.guilds.cache.get(player.guildId);
+    Logger.error(
+        `Player got an exception from ${guild?.name || "Unknown"} (${player.guildId}):`,
+        data?.exception?.message || data?.message || "Playback exception",
+    );
 
-    Logger.error(`Player got an exception from ${guild?.name || "Unknown"} (${player.guildId})`, data);
+    await cleanupNowPlayingMessage(player, true);
 
-    if (player.message) {
-        player.message.delete().catch(() => {});
-        player.message = null;
-    }
-
+    const breaker = recordPlaybackFailure(player.guildId);
     const channel = client.channels.cache.get(player.textId);
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
-    if (!player.queue.isEmpty) {
-        embed.setDescription(`Error while playing. Skipping to the next song...`);
+    if (!breaker.tripped) {
+        const recovered = await tryAlternateSourceFallback(client, player);
+        if (recovered) return;
+    }
 
+    if (breaker.tripped) {
+        player.queue.clear();
+        embed.setDescription("Multiple consecutive playback errors occurred. Stopping queue to prevent loop.");
+        if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
+        if (player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
+            await Promise.resolve(player.stop()).catch(() => {});
+        }
+        return;
+    }
+
+    if (!player.queue.isEmpty) {
+        embed.setDescription("Error while playing current track. Skipping to the next song...");
         if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
     } else {
-        embed.setDescription(`Error while playing and the queue is empty. Stopping the player...`);
-
+        embed.setDescription("Error while playing and the queue is empty. Stopping the player...");
         if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
     }
 

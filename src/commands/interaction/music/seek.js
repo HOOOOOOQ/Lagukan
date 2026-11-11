@@ -1,4 +1,5 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
+const { refreshNowPlayingDashboard } = require("../../../functions/nowPlayingManager.js");
 const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
@@ -22,21 +23,20 @@ module.exports = {
         voice: true,
         player: true,
         current: true,
+        dj: true,
     },
     devOnly: false,
     run: async (client, interaction, player) => {
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
         const time = interaction.options.getInteger("time");
 
-        if (!player.queue.current.isSeekable) {
-            embed.setDescription(`The current song is not seekable.`);
-
+        if (!player.queue.current.isSeekable || player.queue.current.isStream) {
+            embed.setDescription("The current song is not seekable.");
             return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
         if (time * 1000 > player.queue.current.duration) {
-            embed.setDescription(`Time is greater than the duration of the song.`);
-
+            embed.setDescription("Time exceeds the duration of the current song.");
             return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
@@ -44,6 +44,8 @@ module.exports = {
         if (!deferred) return;
 
         await Promise.resolve(player.seek(time * 1000));
+        player.position = time * 1000;
+        await refreshNowPlayingDashboard(client, player);
 
         embed.setDescription(`Seeked to: \`${time}s\``);
 
