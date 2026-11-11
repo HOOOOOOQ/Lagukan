@@ -6,6 +6,7 @@ const {
 } = require("../../../functions/voiceSessionManager.js");
 const { recordPlaybackFailure } = require("../../../functions/nodeHealthManager.js");
 const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
+const { onTrackSessionFailed } = require("../../../functions/musicStatsEngine.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, player, track, message) => {
@@ -29,6 +30,7 @@ module.exports = async (client, player, track, message) => {
         errorMessage: message || "Track load/resolve failed",
     });
 
+    await onTrackSessionFailed(client, player, track).catch(() => {});
     await cleanupNowPlayingMessage(player, true);
 
     const breaker = recordPlaybackFailure(player.guildId);

@@ -6,6 +6,8 @@ const {
 } = require("../../../functions/voiceSessionManager.js");
 const { getGuildMusicSettings } = require("../../../functions/musicPermissions.js");
 const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
+const { onTrackSessionEnd } = require("../../../functions/musicStatsEngine.js");
+const { cancelGuildSleepTimer, stopGuildRadioMode, clearAutoResumeSnapshot } = require("../../../functions/radioAndSleepManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, player) => {
@@ -21,10 +23,14 @@ module.exports = async (client, player) => {
             Logger.debug(`Player destroyed from [${guild.name}] (${guild.id})`);
         }
 
+        await onTrackSessionEnd(client, player, "stopped").catch(() => {});
         await cleanupNowPlayingMessage(player, true);
 
         // Never auto-reconnect if this guild was intentionally disconnected via /leave
         if (!guild || isGuildManuallyDisconnected(client, guildId) || isGuildLeavingInProgress(guildId)) {
+            cancelGuildSleepTimer(guildId);
+            stopGuildRadioMode(guildId);
+            clearAutoResumeSnapshot(guildId);
             return;
         }
 

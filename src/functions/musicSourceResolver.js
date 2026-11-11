@@ -397,6 +397,8 @@ function createMetadataBackedTrack(metadata, requester, driverId = "lavalink/v4/
             pluginInfo: {
                 originalSource: metadata.originalSource || "spotify",
                 originalUri: metadata.uri || "",
+                albumName: metadata.albumName || null,
+                genre: metadata.genre || null,
                 isMetadataOnly: true,
                 resolvedVia: null,
             },
@@ -580,7 +582,7 @@ async function getSpotifyClientToken() {
     return spotifyTokenCache.accessToken;
 }
 
-function mapSpotifyApiTrack(item, fallbackCover = null) {
+function mapSpotifyApiTrack(item, fallbackCover = null, fallbackAlbum = null) {
     if (!item || !item.id || !item.name || item.type === "episode") return null;
     const artists = Array.isArray(item.artists)
         ? item.artists
@@ -589,11 +591,13 @@ function mapSpotifyApiTrack(item, fallbackCover = null) {
               .join(", ")
         : "Unknown";
     const cover = item.album?.images?.[0]?.url || fallbackCover || null;
+    const albumName = item.album?.name || fallbackAlbum || null;
 
     return {
         identifier: item.id,
         title: item.name,
         author: artists || "Unknown",
+        albumName,
         duration: Number(item.duration_ms || 0),
         uri: `https://open.spotify.com/track/${item.id}`,
         artworkUrl: cover,
@@ -924,6 +928,7 @@ async function resolveDeezerQuery(client, detected, requester) {
                     identifier: String(t.id),
                     title: t.title,
                     author: t.artist?.name || "Unknown",
+                    albumName: t.album?.title || data?.title || null,
                     duration: Number(t.duration || 0) * 1000,
                     uri: t.link || `https://www.deezer.com/track/${t.id}`,
                     artworkUrl: t.album?.cover_big || t.album?.cover_medium || fallbackCover || null,
@@ -1266,6 +1271,8 @@ function serializeTrack(track, extra = {}) {
     return {
         title: String(track?.title || "Unknown").slice(0, 200),
         author: String(track?.author || "Unknown").slice(0, 150),
+        albumName: track?.pluginInfo?.albumName ? String(track.pluginInfo.albumName).slice(0, 150) : null,
+        genre: track?.pluginInfo?.genre ? String(track.pluginInfo.genre).slice(0, 80) : null,
         uri: String(track?.pluginInfo?.originalUri || track?.uri || "").slice(0, 500),
         identifier: String(track?.identifier || "").slice(0, 150),
         duration: Number(track?.duration || 0),

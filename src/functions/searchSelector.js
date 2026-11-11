@@ -3,6 +3,7 @@ const { convertTime } = require("./timeFormat.js");
 const { formatTrackSourceLabel, enqueueTracksStaged } = require("./musicSourceResolver.js");
 const { getOrCreateGuildPlayer, isPlayerActivelyPlayingOrPausedTrack, startPlayerIfIdle } = require("./musicPermissions.js");
 const { refreshNowPlayingDashboard, ensureNowPlayingDashboardVisible, truncateText } = require("./nowPlayingManager.js");
+const { recordTrackRequest } = require("./musicStatsEngine.js");
 const { safeEditReply, safeDeferUpdate, safeReply } = require("./interactionResponder.js");
 const Logger = require("../utils/logger");
 
@@ -47,6 +48,11 @@ async function enqueueSingleTrackAndRespond(client, interaction, track) {
 
     const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
     player.queue.add(track);
+    await recordTrackRequest(client, {
+        guildId: interaction.guildId,
+        userId: interaction.user?.id,
+        count: 1,
+    });
 
     const dur = track.isStream ? "LIVE" : convertTime(track.duration || 0);
     const sourceLabel = formatTrackSourceLabel(track);
@@ -190,6 +196,11 @@ async function enqueuePlaylistAndRespond(client, interaction, searchResult) {
 
     const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
     const staged = enqueueTracksStaged(client, player, searchResult.tracks, { chunkSize: 50 });
+    await recordTrackRequest(client, {
+        guildId: interaction.guildId,
+        userId: interaction.user?.id,
+        count: staged.totalScheduled || 1,
+    });
 
     if (!wasPlaying) {
         const outcome = await startPlayerIfIdle(client, player, {

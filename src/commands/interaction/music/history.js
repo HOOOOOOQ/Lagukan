@@ -10,14 +10,25 @@ const {
     isPlayerActivelyPlayingOrPausedTrack,
     startPlayerIfIdle,
 } = require("../../../functions/musicPermissions.js");
+const { getUserListeningHistory, formatListeningDuration, recordTrackRequest } = require("../../../functions/musicStatsEngine.js");
 const { refreshNowPlayingDashboard, ensureNowPlayingDashboardVisible, truncateText } = require("../../../functions/nowPlayingManager.js");
 const { safeDeferReply, safeEditReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "history",
-    description: "View recently played songs in this server or replay a track from history",
+    description: "Lihat riwayat lagu yang baru diputar (Personal atau Server) dan putar ulang",
     category: "music",
     options: [
+        {
+            name: "scope",
+            description: "Pilih riwayat mendengarkan Personal kamu atau riwayat Server",
+            type: 3,
+            required: false,
+            choices: [
+                { name: "Personal (Riwayat Mendengarkan Saya)", value: "personal" },
+                { name: "Server (Recently Played Server)", value: "server" },
+            ],
+        },
         {
             name: "play_index",
             description: "Optional history number (1 = most recent) to replay immediately",
@@ -48,6 +59,7 @@ module.exports = {
         const embedColor = client.config.embedColor;
         const embed = new EmbedBuilder().setColor(embedColor);
 
+        const scope = interaction.options.getString("scope") || "server";
         const playIndex = interaction.options.getInteger("play_index");
         const clearFlag = Boolean(interaction.options.getBoolean("clear"));
 
@@ -65,7 +77,10 @@ module.exports = {
             return safeEditReply(interaction, { embeds: [embed] });
         }
 
-        const history = await getGuildTrackHistory(client, interaction.guild);
+        const history =
+            scope === "personal"
+                ? await getUserListeningHistory(client, interaction.user.id, 50)
+                : await getGuildTrackHistory(client, interaction.guild);
 
         if (playIndex !== null) {
             const voiceChannel = interaction.member?.voice?.channel;
@@ -109,6 +124,11 @@ module.exports = {
             const track = hydrateStoredTrack(client, target, interaction.user);
             const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
             player.queue.add(track);
+            await recordTrackRequest(client, {
+                guildId: interaction.guildId,
+                userId: interaction.user.id,
+                count: 1,
+            });
 
             if (!wasPlaying) {
                 const outcome = await startPlayerIfIdle(client, player, {
@@ -134,12 +154,23 @@ module.exports = {
         if (!history.length) {
             const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
             if (!deferred) return;
-            embed.setDescription("No songs have been played in this server yet.");
+            embed.setDescription(
+                scope === "personal"
+                    ? "Kamu belum memiliki riwayat lagu yang selesai diputar."
+                    : "No songs have been played in this server yet.",
+            );
             return safeEditReply(interaction, { embeds: [embed] });
         }
 
+        const totalPersonalMs = scope === "personal" ? history.reduce((acc, h) => acc + Number(h.listenedMs || 0), 0) : 0;
+
         const lines = history.map((item, idx) => {
-            const dur = item.isStream ? "LIVE" : convertTime(item.duration || 0);
+            const dur =
+                scope === "personal"
+                    ? formatListeningDuration(item.listenedMs || item.duration || 0)
+                    : item.isStream
+                      ? "LIVE"
+                      : convertTime(item.duration || 0);
             const playedTs = item.playedAt ? `<t:${Math.floor(new Date(item.playedAt).getTime() / 1000)}:R>` : "";
             const title = truncateText(item.title, 38);
             const artist = truncateText(item.author, 22);
@@ -148,11 +179,17 @@ module.exports = {
 
         embed
             .setAuthor({
-                name: `${botName} • Playback History`,
+                name:
+                    scope === "personal"
+                        ? `${botName} • Personal Listening History (${interaction.user.username})`
+                        : `${botName} • Server Playback History`,
                 iconURL: client.user?.displayAvatarURL?.(),
             })
             .setFooter({
-                text: `Showing ${history.length} recent track(s) • Replay with /history play_index:<number>`,
+                text:
+                    scope === "personal"
+                        ? `${history.length} lagu terakhir • Total didengar di daftar ini: ${formatListeningDuration(totalPersonalMs)} • Replay: /history scope:personal play_index:<no>`
+                        : `Showing ${history.length} recent track(s) • Replay with /history play_index:<number>`,
             });
 
         const pages = lodash.chunk(lines, 10).map((c) => c.join("\n"));

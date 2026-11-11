@@ -4,6 +4,7 @@ const { normalizeGuildData, normalizeUserData, createDataGuild, createDataUser }
 const { cleanupStalePlayerIfDisconnected, clearManualDisconnect, getGuildPlayer } = require("./voiceSessionManager.js");
 const { getAnyConnectedNode, waitForNodeSessionReady, getCachedNodeCapabilities } = require("./nodeHealthManager.js");
 const { serializeTrack } = require("./musicSourceResolver.js");
+const { getPremiumAccess } = require("./premiumSystem.js");
 const Logger = require("../utils/logger");
 
 const MAX_HISTORY_ITEMS = 50;
@@ -81,6 +82,21 @@ async function updateGuildMusicSettings(client, guildOrId, patch = {}) {
             .catch((err) => {
                 Logger.debug(`[MusicSettings] Gagal menyimpan pengaturan musik guild (${gId}): ${err?.message || err}`);
             });
+    }
+
+    if (typeof client?.djConfigData?.findOneAndUpdate === "function") {
+        await client.djConfigData
+            .findOneAndUpdate(
+                { guildId: gId },
+                {
+                    $set: {
+                        enabled: Boolean(normalized.music.djMode),
+                        roleId: normalized.music.djRoleId || null,
+                    },
+                },
+                { upsert: true, returnDocument: "after" },
+            )
+            .catch(() => {});
     }
 
     return normalized.music;
@@ -528,7 +544,17 @@ function isSameTrackEntry(a, b) {
     );
 }
 
-async function addUserFavorite(client, user, track) {
+function buildFavoriteTrackKey(entry) {
+    if (entry?.identifier) return `id:${String(entry.identifier).toLowerCase()}`;
+    if (entry?.uri) return `uri:${String(entry.uri).toLowerCase()}`;
+    return `meta:${String(entry?.title || "")
+        .toLowerCase()
+        .trim()}::${String(entry?.author || "")
+        .toLowerCase()
+        .trim()}`;
+}
+
+async function addUserFavorite(client, user, track, guildId = null) {
     if (!user?.id || !track) return { status: "invalid", favorites: [] };
     await createDataUser(client, user);
     const uId = String(user.id);
@@ -539,8 +565,11 @@ async function addUserFavorite(client, user, track) {
         return { status: "exists", favorites, entry };
     }
 
-    if (favorites.length >= MAX_FAVORITES_PER_USER) {
-        return { status: "limit", favorites, max: MAX_FAVORITES_PER_USER };
+    const premium = await getPremiumAccess(client, { userId: uId, guildId });
+    const maxFavorites = premium.limits?.maxFavorites || MAX_FAVORITES_PER_USER;
+
+    if (favorites.length >= maxFavorites) {
+        return { status: "limit", favorites, max: maxFavorites };
     }
 
     favorites.unshift(entry);
@@ -552,6 +581,32 @@ async function addUserFavorite(client, user, track) {
         .catch((err) => {
             Logger.debug(`[Favorites] Gagal menyimpan favorit user (${uId}): ${err?.message || err}`);
         });
+
+    const trackKey = buildFavoriteTrackKey(entry);
+    await client.favoriteTrackData
+        ?.findOneAndUpdate(
+            { userId: uId, trackKey },
+            {
+                $set: {
+                    userId: uId,
+                    trackKey,
+                    title: entry.title,
+                    author: entry.author,
+                    album: track?.pluginInfo?.albumName || null,
+                    genre: track?.pluginInfo?.genre || null,
+                    uri: entry.uri,
+                    identifier: entry.identifier,
+                    duration: entry.duration,
+                    isStream: entry.isStream,
+                    artworkUrl: entry.artworkUrl,
+                    source: entry.source,
+                    originalSource: entry.originalSource,
+                    addedAt: entry.addedAt,
+                },
+            },
+            { upsert: true, returnDocument: "after" },
+        )
+        .catch(() => {});
 
     return { status: "added", favorites, entry };
 }
@@ -572,6 +627,10 @@ async function removeUserFavorite(client, user, oneBasedIndex) {
         ?.findOneAndUpdate({ id: uId }, { $set: { favorites } }, { upsert: true, returnDocument: "after" })
         .catch(() => {});
 
+    if (removed) {
+        await client.favoriteTrackData?.findOneAndDelete({ userId: uId, trackKey: buildFavoriteTrackKey(removed) }).catch(() => {});
+    }
+
     return { status: "removed", removed, favorites };
 }
 
@@ -583,6 +642,10 @@ async function clearUserFavorites(client, user) {
     await client.userData
         ?.findOneAndUpdate({ id: uId }, { $set: { favorites: [] } }, { upsert: true, returnDocument: "after" })
         .catch(() => {});
+
+    if (typeof client?.favoriteTrackData?.deleteMany === "function") {
+        await client.favoriteTrackData.deleteMany({ userId: uId }).catch(() => {});
+    }
 }
 
 // ============================================================================
@@ -618,19 +681,44 @@ function canManageServerPlaylist(client, guild, member, user, interaction = null
     return false;
 }
 
+async function syncUserPlaylistMirror(client, playlistPlain) {
+    if (!playlistPlain?.playlistId || !client?.userPlaylistData?.findOneAndUpdate) return;
+    await client.userPlaylistData
+        .findOneAndUpdate(
+            { playlistId: playlistPlain.playlistId },
+            {
+                $set: {
+                    playlistId: playlistPlain.playlistId,
+                    userId: String(playlistPlain.ownerId || ""),
+                    guildId: playlistPlain.guildId || null,
+                    scope: playlistPlain.scope || "personal",
+                    name: playlistPlain.name,
+                    normalizedName: playlistPlain.normalizedName,
+                    description: playlistPlain.description || "",
+                    tracks: Array.isArray(playlistPlain.tracks) ? playlistPlain.tracks : [],
+                },
+            },
+            { upsert: true, returnDocument: "after" },
+        )
+        .catch(() => {});
+}
+
 async function createSavedPlaylist(client, { scope = "personal", name, description = "", userId, guildId }) {
     const { display, normalized } = normalizePlaylistName(name);
     if (!display || display.length > 50) {
         return { ok: false, error: "Playlist name must be between 1 and 50 characters." };
     }
 
+    const premium = await getPremiumAccess(client, { userId, guildId });
+    const maxPlaylists = premium.limits?.maxPlaylists || MAX_PLAYLISTS_PER_OWNER;
+
     const filter = scope === "server" ? { scope: "server", guildId: String(guildId) } : { scope: "personal", ownerId: String(userId) };
 
     const count = await client.playlistData.countDocuments(filter);
-    if (count >= MAX_PLAYLISTS_PER_OWNER) {
+    if (count >= maxPlaylists) {
         return {
             ok: false,
-            error: `Maximum playlist limit (${MAX_PLAYLISTS_PER_OWNER}) reached for ${scope === "server" ? "this server" : "your account"}.`,
+            error: `Maximum playlist limit (${maxPlaylists}) reached for ${scope === "server" ? "this server" : "your account"}.`,
         };
     }
 
@@ -652,7 +740,39 @@ async function createSavedPlaylist(client, { scope = "personal", name, descripti
         tracks: [],
     });
 
-    return { ok: true, playlist: created.toObject() };
+    const plain = created.toObject();
+    await syncUserPlaylistMirror(client, plain);
+    return { ok: true, playlist: plain };
+}
+
+async function renameSavedPlaylist(client, { scope = "personal", oldName, newName, userId, guildId }) {
+    const oldNorm = normalizePlaylistName(oldName);
+    const nextNorm = normalizePlaylistName(newName);
+    if (!nextNorm.display || nextNorm.display.length > 50) {
+        return { ok: false, error: "New playlist name must be between 1 and 50 characters." };
+    }
+
+    const baseFilter = scope === "server" ? { scope: "server", guildId: String(guildId) } : { scope: "personal", ownerId: String(userId) };
+    const doc = await client.playlistData.findOne({ ...baseFilter, normalizedName: oldNorm.normalized });
+    if (!doc) {
+        return { ok: false, error: `Playlist \`${oldName}\` was not found in ${scope} playlists.` };
+    }
+
+    if (oldNorm.normalized !== nextNorm.normalized) {
+        const duplicate = await client.playlistData.findOne({ ...baseFilter, normalizedName: nextNorm.normalized });
+        if (duplicate) {
+            return { ok: false, error: `A ${scope} playlist named \`${duplicate.name}\` already exists.` };
+        }
+    }
+
+    const previousName = doc.name;
+    doc.name = nextNorm.display;
+    doc.normalizedName = nextNorm.normalized;
+    await doc.save();
+
+    const plain = doc.toObject();
+    await syncUserPlaylistMirror(client, plain);
+    return { ok: true, previousName, playlist: plain };
 }
 
 async function listSavedPlaylists(client, { scope = "personal", userId, guildId }) {
@@ -691,9 +811,11 @@ async function addTracksToPlaylist(client, { scope = "personal", name, tracks = 
         return { ok: false, error: `Playlist \`${name}\` was not found in ${scope} playlists.` };
     }
 
-    const availableSlots = MAX_TRACKS_PER_PLAYLIST - doc.tracks.length;
+    const premium = await getPremiumAccess(client, { userId, guildId });
+    const maxTracks = premium.limits?.maxTracksPerPlaylist || MAX_TRACKS_PER_PLAYLIST;
+    const availableSlots = maxTracks - doc.tracks.length;
     if (availableSlots <= 0) {
-        return { ok: false, error: `Playlist \`${doc.name}\` is full (maximum ${MAX_TRACKS_PER_PLAYLIST} tracks).` };
+        return { ok: false, error: `Playlist \`${doc.name}\` is full (maximum ${maxTracks} tracks).` };
     }
 
     const incoming = tracks.slice(0, availableSlots).map((t) =>
@@ -706,9 +828,12 @@ async function addTracksToPlaylist(client, { scope = "personal", name, tracks = 
     doc.tracks.push(...incoming);
     await doc.save();
 
+    const plain = doc.toObject();
+    await syncUserPlaylistMirror(client, plain);
+
     return {
         ok: true,
-        playlist: doc.toObject(),
+        playlist: plain,
         addedCount: incoming.length,
         truncatedCount: Math.max(0, tracks.length - incoming.length),
     };
@@ -733,7 +858,9 @@ async function removeTrackFromPlaylist(client, { scope = "personal", name, posit
 
     const [removed] = doc.tracks.splice(idx, 1);
     await doc.save();
-    return { ok: true, removed, playlist: doc.toObject() };
+    const plain = doc.toObject();
+    await syncUserPlaylistMirror(client, plain);
+    return { ok: true, removed, playlist: plain };
 }
 
 async function deleteSavedPlaylist(client, { scope = "personal", name, userId, guildId }) {
@@ -747,7 +874,11 @@ async function deleteSavedPlaylist(client, { scope = "personal", name, userId, g
     if (!deleted) {
         return { ok: false, error: `Playlist \`${name}\` was not found.` };
     }
-    return { ok: true, playlist: typeof deleted.toObject === "function" ? deleted.toObject() : deleted };
+    const plain = typeof deleted.toObject === "function" ? deleted.toObject() : deleted;
+    if (plain?.playlistId) {
+        await client.userPlaylistData?.findOneAndDelete?.({ playlistId: plain.playlistId }).catch(() => {});
+    }
+    return { ok: true, playlist: plain };
 }
 
 // ============================================================================
@@ -853,6 +984,7 @@ module.exports = {
     clearUserFavorites,
     canManageServerPlaylist,
     createSavedPlaylist,
+    renameSavedPlaylist,
     listSavedPlaylists,
     getSavedPlaylist,
     addTracksToPlaylist,

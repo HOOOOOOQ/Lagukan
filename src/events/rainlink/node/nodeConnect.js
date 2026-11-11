@@ -9,6 +9,7 @@ const {
 } = require("../../../functions/voiceSessionManager.js");
 const { recordNodeEvent, fetchNodeCapabilities, waitForNodeSessionReady } = require("../../../functions/nodeHealthManager.js");
 const { getGuildMusicSettings } = require("../../../functions/musicPermissions.js");
+const { tryAutoResumeGuildPlayback } = require("../../../functions/radioAndSleepManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, node) => {
@@ -92,7 +93,7 @@ module.exports = async (client, node) => {
 
                         const musicSettings = getGuildMusicSettings(client, guild);
 
-                        await client.rainlink.create({
+                        const reconnectedPlayer = await client.rainlink.create({
                             guildId: guild.id,
                             voiceId: voice.id,
                             textId: text.id,
@@ -100,6 +101,10 @@ module.exports = async (client, node) => {
                             volume: musicSettings.defaultVolume || client.config.defaultVolume,
                             deaf: true,
                         });
+
+                        if (reconnectedPlayer) {
+                            await tryAutoResumeGuildPlayback(client, reconnectedPlayer).catch(() => {});
+                        }
                     } catch (err) {
                         Logger.debug(`[AutoReconnect] Gagal menyambungkan ulang player di server ${gId}: ${err?.message || err}`);
                     }

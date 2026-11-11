@@ -6,6 +6,7 @@ const {
 } = require("../../../functions/voiceSessionManager.js");
 const { recordPlaybackFailure } = require("../../../functions/nodeHealthManager.js");
 const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
+const { onTrackSessionFailed } = require("../../../functions/musicStatsEngine.js");
 const Logger = require("../../../utils/logger");
 
 async function tryAlternateSourceFallback(client, player) {
@@ -69,6 +70,8 @@ module.exports = async (client, player, data) => {
         const recovered = await tryAlternateSourceFallback(client, player);
         if (recovered) return;
     }
+
+    await onTrackSessionFailed(client, player, player.queue?.current).catch(() => {});
 
     if (breaker.tripped) {
         player.queue.clear();

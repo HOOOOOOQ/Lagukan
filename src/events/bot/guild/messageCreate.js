@@ -4,6 +4,9 @@ const { permissions } = require("../../../functions/getPermission.js");
 const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
 const { handleCrossGuildUserTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
 const { buildSupportComponents } = require("../../../functions/interactionResponder.js");
+const { buildProfileEmbedAndComponents, attachProfileCollector } = require("../../../functions/musicStatsEngine.js");
+const { handleRequestChannelMessage } = require("../../../functions/voiceRequestSystem.js");
+const { handleGuessTheSongMessage } = require("../../../functions/musicGamesSystem.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, message) => {
@@ -46,9 +49,81 @@ module.exports = async (client, message) => {
     const mention = new RegExp(`^<@!?${client.user.id}>( |)$`);
 
     if (message.content.match(mention)) {
-        embed.setDescription(`Hello! I'm **${botName} Music Bot**. Use \`/help\` command to get list of commands.`);
+        embed.setDescription(
+            `Hello! I'm **${botName} Music Bot**. Use \`/help\` command to get list of commands (or \`666!cek\` for your music profile).`,
+        );
 
         await message.reply({ embeds: [embed] }).catch(() => {});
+    }
+
+    // 1. Public User Music Profile Prefix Command: `666!cek` & `666!cek @user`
+    const trimmedContent = String(message.content || "").trim();
+    if (/^666!cek(?:\s+|$)/i.test(trimmedContent)) {
+        if (userData?.ban?.status) {
+            embed.setDescription(
+                `You have been banned from using the bot.\n\`\`\`${userData.ban.reason}\`\`\`\nPlease contact the developer if you think this is a mistake.`,
+            );
+            await message.reply({ embeds: [embed], components: supportComponents }).catch(() => {});
+            return;
+        }
+
+        if (client.data.get("maintenance") && !client.config.dev.includes(message.author.id)) {
+            embed.setDescription(`${botName} is currently under maintenance. Please try again later.`);
+            await message.reply({ embeds: [embed], components: supportComponents }).catch(() => {});
+            return;
+        }
+
+        const rawArg = trimmedContent.replace(/^666!cek\s*/i, "").trim();
+        let targetUser = message.mentions?.users?.first?.() || null;
+        let targetMember = message.mentions?.members?.first?.() || null;
+
+        if (!targetUser && rawArg) {
+            const idMatch = rawArg.match(/^<?@?!?(\d{17,20})>?$/);
+            if (idMatch) {
+                const targetId = idMatch[1];
+                targetMember =
+                    message.guild.members?.cache?.get?.(targetId) || (await message.guild.members?.fetch?.(targetId).catch(() => null));
+                targetUser =
+                    targetMember?.user || client.users?.cache?.get?.(targetId) || (await client.users?.fetch?.(targetId).catch(() => null));
+            }
+        }
+
+        if (!targetUser) {
+            targetUser = message.author;
+            targetMember = message.member;
+        } else if (!targetMember && message.guild.members?.fetch) {
+            targetMember = await message.guild.members.fetch(targetUser.id).catch(() => null);
+        }
+
+        try {
+            const payload = await buildProfileEmbedAndComponents(client, {
+                guild: message.guild,
+                targetUser,
+                targetMember,
+            });
+            const sent = await message.reply(payload).catch(() => null);
+            if (sent) {
+                attachProfileCollector(client, sent, {
+                    guild: message.guild,
+                    targetUser,
+                    targetMember,
+                    viewerId: message.author.id,
+                });
+            }
+        } catch (err) {
+            Logger.error("[ProfileCommand] Error saat merender 666!cek:", err);
+        }
+        return;
+    }
+
+    // 2. Active Guess The Song Round Plain-Text Answer Detection
+    const handledGuess = await handleGuessTheSongMessage(client, message).catch(() => false);
+    if (handledGuess) return;
+
+    // 3. Dedicated Voice Channel Music Request Panel Direct Message Input
+    if (!userData?.ban?.status) {
+        const handledReq = await handleRequestChannelMessage(client, message).catch(() => false);
+        if (handledReq) return;
     }
 
     let prefix = client.config.prefix;

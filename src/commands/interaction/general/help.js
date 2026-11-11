@@ -7,7 +7,13 @@ const {
     MessageFlags,
     StringSelectMenuBuilder,
 } = require("discord.js");
-const { HELP_CATEGORIES, getVerifiedCommandDocs, getDocsForSection, formatCommandField } = require("../../../functions/helpCatalog.js");
+const {
+    HELP_CATEGORIES,
+    PREFIX_PROFILE_DOC,
+    getVerifiedCommandDocs,
+    getDocsForSection,
+    formatCommandField,
+} = require("../../../functions/helpCatalog.js");
 const { safeReply, safeEditReply, safeDeferUpdate } = require("../../../functions/interactionResponder.js");
 
 const COMMANDS_PER_PAGE = 4;
@@ -20,8 +26,11 @@ function buildHomeEmbed(client, interaction, allDocs) {
 
     const musicDocs = allDocs.filter((d) => d.categoryKey === "music");
     const playlistDocs = allDocs.filter((d) => d.categoryKey === "playlist");
-    const musicSettingDocs = allDocs.filter((d) => d.categoryKey === "settings");
-    const customRoleDocs = allDocs.filter((d) => d.categoryKey === "customrole");
+    const profileDocs = allDocs.filter((d) => d.categoryKey === "profile");
+    const settingDocs = allDocs.filter((d) => d.categoryKey === "settings" || d.categoryKey === "customrole");
+    const djDocs = allDocs.filter((d) => d.categoryKey === "dj");
+    const gameDocs = allDocs.filter((d) => d.categoryKey === "games");
+    const premiumDocs = allDocs.filter((d) => d.categoryKey === "premium");
     const adminDocs = allDocs.filter((d) => d.categoryKey === "admin");
 
     const fmtNames = (arr) => arr.map((d) => `\`/${d.name}\``).join(", ") || "-";
@@ -31,9 +40,10 @@ function buildHomeEmbed(client, interaction, allDocs) {
         .setAuthor({ name: `${botName} Music Bot • Pusat Bantuan (/help)`, iconURL: iconUrl })
         .setThumbnail(iconUrl || null)
         .setDescription(
-            `Halo **${requesterLabel}**! Saya **${botName}**, bot musik multi-platform & manajemen komunitas Discord.\n` +
-                `Mendukung **YouTube, YouTube Music, Spotify** *(resolusi audio cerdas)*, **SoundCloud, Deezer, Bandcamp, & Direct Audio URL**.\n\n` +
-                `Pilih kategori pada **Select Menu** atau klik tombol di bawah untuk melihat **fungsi, cara pakai, parameter, contoh, permission, & batasan** setiap perintah.`,
+            `Halo **${requesterLabel}**! Saya **${botName}**, bot musik multi-platform, profil pendengar, & mini-game komunitas Discord.\n` +
+                `Mendukung **YouTube, YouTube Music, Spotify** *(resolusi audio cerdas)*, **SoundCloud, Deezer, Bandcamp, & Direct Audio URL**.\n` +
+                `💡 **Cek Profil Cepat (Prefix):** Ketik \`666!cek\` atau \`666!cek @user\` langsung di chat!\n\n` +
+                `Pilih salah satu dari **8 Kategori** pada **Select Menu** atau klik tombol di bawah untuk melihat detail setiap perintah.`,
         )
         .addFields(
             {
@@ -47,23 +57,38 @@ function buildHomeEmbed(client, interaction, allDocs) {
                 inline: true,
             },
             {
-                name: `⚙️ MUSIC SETTINGS (${musicSettingDocs.length})`,
-                value: fmtNames(musicSettingDocs),
+                name: `👤 PERSONAL PROFILE (${profileDocs.length} + Prefix)`,
+                value: `\`666!cek\`, ${fmtNames(profileDocs)}`,
                 inline: true,
             },
             {
-                name: `🎨 CUSTOM ROLE (${customRoleDocs.length})`,
-                value: fmtNames(customRoleDocs),
+                name: `🎧 DJ SYSTEM (${djDocs.length})`,
+                value: fmtNames(djDocs),
                 inline: true,
             },
             {
-                name: `🛡️ ADMIN & UTILITAS (${adminDocs.length})`,
+                name: `⚙️ SERVER SETTINGS (${settingDocs.length})`,
+                value: fmtNames(settingDocs),
+                inline: false,
+            },
+            {
+                name: `🎮 MUSIC GAMES (${gameDocs.length})`,
+                value: fmtNames(gameDocs),
+                inline: true,
+            },
+            {
+                name: `💎 PREMIUM (${premiumDocs.length})`,
+                value: fmtNames(premiumDocs),
+                inline: true,
+            },
+            {
+                name: `🛡️ ADMIN (${adminDocs.length})`,
                 value: fmtNames(adminDocs),
                 inline: false,
             },
         )
         .setFooter({
-            text: `© ${botName} Music Bot • Total Slash Command Aktif: ${allDocs.length} • Ketik /help command:<nama> untuk detail cepat`,
+            text: `© ${botName} Music Bot • Total Slash Command Aktif: ${allDocs.length} + Prefix 666!cek • Ketik /help command:<nama> untuk detail`,
             iconURL: iconUrl,
         })
         .setTimestamp();
@@ -111,14 +136,15 @@ function buildSingleCommandEmbed(client, doc) {
     const botName = client.config.botName || "Lagukan";
     const iconUrl = client.user?.displayAvatarURL?.() || undefined;
     const catMeta = HELP_CATEGORIES[doc.categoryKey] || HELP_CATEGORIES.music;
+    const cmdDisplay = doc.isPrefix ? doc.name : `/${doc.name}`;
 
     return new EmbedBuilder()
         .setColor(client.config.embedColor)
         .setAuthor({ name: `${botName} • Detail Perintah`, iconURL: iconUrl })
-        .setTitle(`${catMeta.emoji} Command: /${doc.name}`)
+        .setTitle(`${catMeta.emoji} Command: ${cmdDisplay}`)
         .setDescription(doc.func)
         .addFields(
-            { name: "📌 Nama Command", value: `\`/${doc.name}\``, inline: true },
+            { name: "📌 Nama Command", value: `\`${cmdDisplay}\``, inline: true },
             { name: "🗂️ Kategori", value: `\`${catMeta.label.toUpperCase()}\``, inline: true },
             { name: "🔐 Permission Dibutuhkan", value: doc.permission, inline: false },
             { name: "⌨️ Cara Penggunaan", value: `\`${doc.usage}\``, inline: false },
@@ -137,7 +163,7 @@ function buildHelpComponents(client, state, allDocs) {
     const { view, sectionKey, page, totalPages, selectedCommand } = state;
     const rows = [];
 
-    // Row 1: Category SelectMenu
+    // Row 1: Category SelectMenu (All 8 Required Categories + Home)
     const categoryMenu = new StringSelectMenuBuilder()
         .setCustomId("help:category")
         .setPlaceholder("📂 Pilih kategori perintah...")
@@ -150,35 +176,56 @@ function buildHelpComponents(client, state, allDocs) {
                 default: view === "home",
             },
             {
-                label: "MUSIC — Pemutar & Kontrol Antrean",
-                description: "Play, Search, Queue, Filter, Lyrics, Volume, History, dll.",
+                label: "Music — Pemutar, Radio, Sleep & Party",
+                description: "Play, Search, Queue, Sleep Timer, Radio Mode, Music Party, dll.",
                 value: "music",
                 emoji: "🎵",
                 default: view === "section" && sectionKey === "music",
             },
             {
-                label: "PLAYLIST — Playlist Pribadi, Server & Favorit",
-                description: "Manajemen /playlist & /favorite lintas server",
+                label: "Playlist — Playlist, Favorite & History",
+                description: "Manajemen /playlist (create/rename/load), /favorite & /history",
                 value: "playlist",
                 emoji: "📂",
                 default: view === "section" && sectionKey === "playlist",
             },
             {
-                label: "MUSIC SETTINGS — Autoplay, 24/7, DJ Mode",
-                description: "Konfigurasi DJ Role, Auto-Leave, Default Volume & 24/7",
-                value: "music_settings_only",
+                label: "Personal Profile — 666!cek, Level, Wrapped & Leaderboard",
+                description: "Profil 666!cek, /musicprofile, /musicrank, /wrapped & /musicleaderboard",
+                value: "profile",
+                emoji: "👤",
+                default: view === "section" && sectionKey === "profile",
+            },
+            {
+                label: "Server Settings — Request Panel, Autoplay, 24/7 & Custom Role",
+                description: "/musicrequest-config, /autoplay, /filter, /247, /musicconfig & /customrole",
+                value: "settings",
                 emoji: "⚙️",
-                default: view === "section" && sectionKey === "music_settings_only",
+                default: view === "section" && sectionKey === "settings",
             },
             {
-                label: "CUSTOM ROLE — Role Kustom Member & Panel",
-                description: "Dashboard /customrole & panel admin /customrole-config",
-                value: "customrole",
-                emoji: "🎨",
-                default: view === "section" && sectionKey === "customrole",
+                label: "DJ System — Kontrol Hak Akses DJ Role",
+                description: "Pengaturan DJ Mode & DJ Role berbasis Role ID (/dj)",
+                value: "dj",
+                emoji: "🎧",
+                default: view === "section" && sectionKey === "dj",
             },
             {
-                label: "ADMIN — Server Tag, Voice Logger & Utilitas",
+                label: "Music Games — Guess The Song & Music Battle",
+                description: "Mini-game /guessthesong dan voting /musicbattle",
+                value: "games",
+                emoji: "🎮",
+                default: view === "section" && sectionKey === "games",
+            },
+            {
+                label: "Premium — Status Kuota & Kustomisasi Dashboard",
+                description: "Cek status & kustomisasi tema server Premium (/premium)",
+                value: "premium",
+                emoji: "💎",
+                default: view === "section" && sectionKey === "premium",
+            },
+            {
+                label: "Admin — Server Tag, Voice Logger & Utilitas",
                 description: "Pengaturan log aktivitas, auto-role tag, statistik & sistem",
                 value: "admin",
                 emoji: "🛡️",
@@ -201,7 +248,7 @@ function buildHelpComponents(client, state, allDocs) {
             .setPlaceholder("🔎 Pilih command untuk melihat kartu detail penuh...")
             .addOptions(
                 activeSectionDocs.slice(0, 25).map((doc) => ({
-                    label: `/${doc.name}`,
+                    label: doc.isPrefix ? doc.name : `/${doc.name}`,
                     description: doc.func.slice(0, 95),
                     value: doc.name,
                     default: view === "command" && selectedCommand?.name === doc.name,
@@ -210,8 +257,8 @@ function buildHelpComponents(client, state, allDocs) {
         rows.push(new ActionRowBuilder().addComponents(cmdMenu));
     }
 
-    // Row 3: Primary Category Buttons [Home] [Music] [Playlist] [Settings] [Admin]
-    const isSettingsActive = view === "section" && ["settings", "music_settings_only", "customrole"].includes(sectionKey);
+    // Row 3: Quick Category Buttons [Home] [Music] [Profile] [Games] [Settings]
+    const isSettingsActive = view === "section" && ["settings", "music_settings_only", "customrole", "dj"].includes(sectionKey);
     const navButtonsRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId("help:btn:home")
@@ -224,20 +271,20 @@ function buildHelpComponents(client, state, allDocs) {
             .setEmoji("🎵")
             .setStyle(view === "section" && sectionKey === "music" ? ButtonStyle.Primary : ButtonStyle.Secondary),
         new ButtonBuilder()
-            .setCustomId("help:btn:playlist")
-            .setLabel("Playlist")
-            .setEmoji("📂")
-            .setStyle(view === "section" && sectionKey === "playlist" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+            .setCustomId("help:btn:profile")
+            .setLabel("Profile")
+            .setEmoji("👤")
+            .setStyle(view === "section" && sectionKey === "profile" ? ButtonStyle.Primary : ButtonStyle.Secondary),
+        new ButtonBuilder()
+            .setCustomId("help:btn:games")
+            .setLabel("Games")
+            .setEmoji("🎮")
+            .setStyle(view === "section" && sectionKey === "games" ? ButtonStyle.Primary : ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId("help:btn:settings")
             .setLabel("Settings")
             .setEmoji("⚙️")
             .setStyle(isSettingsActive ? ButtonStyle.Primary : ButtonStyle.Secondary),
-        new ButtonBuilder()
-            .setCustomId("help:btn:admin")
-            .setLabel("Admin")
-            .setEmoji("🛡️")
-            .setStyle(view === "section" && sectionKey === "admin" ? ButtonStyle.Primary : ButtonStyle.Secondary),
     );
     rows.push(navButtonsRow);
 
@@ -311,7 +358,8 @@ module.exports = {
         };
 
         if (rawQuery) {
-            const matched = allDocs.find((d) => d.name.toLowerCase() === rawQuery);
+            const matched =
+                rawQuery === "666!cek" || rawQuery === "cek" ? PREFIX_PROFILE_DOC : allDocs.find((d) => d.name.toLowerCase() === rawQuery);
             if (matched) {
                 state = {
                     view: "command",
@@ -403,7 +451,7 @@ module.exports = {
                     }
                 } else if (comp.customId === "help:command") {
                     const cmdName = comp.values?.[0] || "";
-                    const found = allDocs.find((d) => d.name === cmdName);
+                    const found = cmdName === "666!cek" ? PREFIX_PROFILE_DOC : allDocs.find((d) => d.name === cmdName);
                     if (found) {
                         state = {
                             view: "command",
