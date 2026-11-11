@@ -21,6 +21,7 @@ const {
 const { handleLyricsCommand } = require("./lyricsProvider.js");
 const { safeReply, safeDeferUpdate, safeEditReply } = require("./interactionResponder.js");
 const { PLAYER_STATE_DESTROYED, getGuildPlayer } = require("./voiceSessionManager.js");
+const { peekCachedGuildPremiumTheme } = require("./premiumSystem.js");
 const Logger = require("../utils/logger");
 
 const PROGRESS_BAR_SEGMENTS = 14;
@@ -73,8 +74,9 @@ function hasAnyPreviousTrack(client, player) {
  * Music Source, Requester, Queue Count, Playback Status, Repeat Status, Shuffle Status, Autoplay Status.
  */
 function buildNowPlayingEmbed(client, player, trackOverride = null) {
-    const botName = client?.config?.botName || "Lagukan";
-    const embedColor = client?.config?.embedColor || "#ff0051";
+    const premiumTheme = player?.guildId ? peekCachedGuildPremiumTheme(player.guildId) : null;
+    const botName = premiumTheme?.customDashboardTitle || client?.config?.botName || "Lagukan";
+    const embedColor = premiumTheme?.customAccentColor || client?.config?.embedColor || "#ff0051";
     const iconUrl = client?.user?.displayAvatarURL?.() || undefined;
     const track = trackOverride || player?.queue?.current;
 
@@ -84,6 +86,8 @@ function buildNowPlayingEmbed(client, player, trackOverride = null) {
 
     const title = truncateText(track.title || "Unknown Title", 58);
     const author = truncateText(track.author || "Unknown Artist", 42);
+    const rawAlbum = track.pluginInfo?.albumName || track.albumName || track.album || null;
+    const albumLabel = rawAlbum ? truncateText(rawAlbum, 38) : "Single / N/A";
     const displayUrl = track.pluginInfo?.originalUri || track.uri || null;
     const isStream = Boolean(track.isStream);
     const totalDurationMs = Math.max(0, Number(track.duration || 0));
@@ -112,7 +116,7 @@ function buildNowPlayingEmbed(client, player, trackOverride = null) {
     const isServerMuted = Boolean(player.data?.get?.("serverMuted"));
 
     const playbackStateLabel = isPaused ? "⏸️ Paused" : "▶️ Playing";
-    const playbackSummary = `\`${playbackStateLabel}\` • Vol \`${player.volume ?? 100}%\`${activeFilter ? ` • \`${activeFilter}\`` : ""}`;
+    const volumeValue = `${player.volume ?? 100}%${activeFilter ? ` • ${activeFilter}` : ""}`;
 
     const titleLine = displayUrl ? `**[${title}](${displayUrl})**` : `**${title}**`;
     const serverMuteAlert = isServerMuted
@@ -125,14 +129,17 @@ function buildNowPlayingEmbed(client, player, trackOverride = null) {
             iconURL: iconUrl,
         })
         .setColor(embedColor)
-        .setDescription(`${titleLine}\n👤 **Artist:** ${author}\n\n${progressLine}${serverMuteAlert}`)
+        .setDescription(
+            `${titleLine}\n👤 **Artist:** ${author} • 💿 **Album:** ${albumLabel} • \`${playbackStateLabel}\`\n\n${progressLine}${serverMuteAlert}`,
+        )
         .addFields(
+            { name: "Album", value: `\`${albumLabel}\``, inline: true },
             { name: "Source", value: `\`${sourceLabel}\``, inline: true },
             { name: "Duration", value: `\`${durationText}\``, inline: true },
             { name: "Elapsed / Remaining", value: `\`${elapsedText}\` / \`${remainingText}\``, inline: true },
             { name: "Requested By", value: requesterLabel, inline: true },
             { name: "Queue", value: queueSummary, inline: true },
-            { name: "Playback", value: playbackSummary, inline: true },
+            { name: "Volume", value: `\`🔊 ${volumeValue}\``, inline: true },
             { name: "Repeat", value: `\`${repeatLabel}\``, inline: true },
             { name: "Shuffle", value: isShuffled ? "`🔀 On`" : "`Off`", inline: true },
             { name: "Autoplay", value: autoplayEnabled ? "`✨ On`" : "`Off`", inline: true },
@@ -720,6 +727,7 @@ const dashboardSendLocks = new Map();
  */
 async function sendOrReplaceNowPlayingDashboard(client, player, track = null) {
     if (!player || player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) return null;
+    if (player.data?.get?.("guessTheSongActive")) return null;
 
     const gId = String(player.guildId || "");
     const previousOp = dashboardSendLocks.get(gId) || Promise.resolve();
@@ -728,6 +736,7 @@ async function sendOrReplaceNowPlayingDashboard(client, player, track = null) {
         .catch(() => {})
         .then(async () => {
             if (!player || player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) return null;
+            if (player.data?.get?.("guessTheSongActive")) return null;
 
             const currentTrack = track || player.queue?.current;
             if (!currentTrack) return null;

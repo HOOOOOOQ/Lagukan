@@ -6,6 +6,7 @@ const { checkSearchRateLimit, smartSearch, hydrateStoredTrack, enqueueTracksStag
 const {
     canManageServerPlaylist,
     createSavedPlaylist,
+    renameSavedPlaylist,
     listSavedPlaylists,
     getSavedPlaylist,
     addTracksToPlaylist,
@@ -17,6 +18,7 @@ const {
 } = require("../../../functions/musicPermissions.js");
 const { refreshNowPlayingDashboard, ensureNowPlayingDashboardVisible, truncateText } = require("../../../functions/nowPlayingManager.js");
 const { getGuildPlayer } = require("../../../functions/voiceSessionManager.js");
+const { recordTrackRequest } = require("../../../functions/musicStatsEngine.js");
 const { safeDeferReply, safeEditReply, safeDeferUpdate } = require("../../../functions/interactionResponder.js");
 
 const SCOPE_OPTION = {
@@ -110,6 +112,26 @@ module.exports = {
             ],
         },
         {
+            name: "play",
+            description: "Play a saved Personal or Server playlist",
+            type: ApplicationCommandOptionType.Subcommand,
+            options: [
+                {
+                    name: "name",
+                    description: "Playlist name to play",
+                    type: ApplicationCommandOptionType.String,
+                    required: true,
+                },
+                SCOPE_OPTION,
+                {
+                    name: "shuffle",
+                    description: "Shuffle tracks before playing",
+                    type: ApplicationCommandOptionType.Boolean,
+                    required: false,
+                },
+            ],
+        },
+        {
             name: "view",
             description: "View all tracks inside a saved playlist",
             type: ApplicationCommandOptionType.Subcommand,
@@ -164,6 +186,26 @@ module.exports = {
                 SCOPE_OPTION,
             ],
         },
+        {
+            name: "rename",
+            description: "Rename an existing Personal or Server playlist",
+            type: ApplicationCommandOptionType.Subcommand,
+            options: [
+                {
+                    name: "name",
+                    description: "Current playlist name",
+                    type: ApplicationCommandOptionType.String,
+                    required: true,
+                },
+                {
+                    name: "new_name",
+                    description: "New playlist name (1-50 characters)",
+                    type: ApplicationCommandOptionType.String,
+                    required: true,
+                },
+                SCOPE_OPTION,
+            ],
+        },
     ],
     permissions: {
         bot: [],
@@ -182,7 +224,7 @@ module.exports = {
         const botName = client.config.botName || "Lagukan";
         const embed = new EmbedBuilder().setColor(embedColor);
 
-        const isWriteAction = ["create", "add", "savequeue", "remove", "delete"].includes(sub);
+        const isWriteAction = ["create", "rename", "add", "savequeue", "remove", "delete"].includes(sub);
         if (
             scope === "server" &&
             isWriteAction &&
@@ -191,6 +233,29 @@ module.exports = {
             const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
             if (!deferred) return;
             embed.setDescription("Managing **Server Playlists** requires `Manage Server` permission or the configured Server DJ Role.");
+            return safeEditReply(interaction, { embeds: [embed] });
+        }
+
+        if (sub === "rename") {
+            const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
+            if (!deferred) return;
+
+            const oldName = interaction.options.getString("name");
+            const newName = interaction.options.getString("new_name");
+            const res = await renameSavedPlaylist(client, {
+                scope,
+                oldName,
+                newName,
+                userId: interaction.user.id,
+                guildId: interaction.guildId,
+            });
+
+            if (!res.ok) {
+                embed.setDescription(res.error);
+                return safeEditReply(interaction, { embeds: [embed] });
+            }
+
+            embed.setDescription(`Renamed **${scope}** playlist **\`${res.previousName}\`** ➔ **\`${res.playlist.name}\`**.`);
             return safeEditReply(interaction, { embeds: [embed] });
         }
 
@@ -319,7 +384,7 @@ module.exports = {
             return safeEditReply(interaction, { embeds: [embed] });
         }
 
-        if (sub === "load") {
+        if (sub === "load" || sub === "play") {
             const voiceChannel = interaction.member?.voice?.channel;
             if (!voiceChannel) {
                 const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
@@ -376,6 +441,14 @@ module.exports = {
 
             const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
             const staged = enqueueTracksStaged(client, player, hydrated, { chunkSize: 50 });
+            if (hydrated[0] && interaction.user?.id) {
+                void recordTrackRequest(client, {
+                    userId: interaction.user.id,
+                    guildId: interaction.guildId,
+                    track: hydrated[0],
+                    requestOrigin: "playlist",
+                }).catch(() => {});
+            }
 
             if (!wasPlaying) {
                 const outcome = await startPlayerIfIdle(client, player, {

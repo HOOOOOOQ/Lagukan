@@ -14,6 +14,7 @@ const {
 } = require("../../../functions/musicPermissions.js");
 const { refreshNowPlayingDashboard, ensureNowPlayingDashboardVisible, truncateText } = require("../../../functions/nowPlayingManager.js");
 const { getGuildPlayer } = require("../../../functions/voiceSessionManager.js");
+const { recordTrackRequest } = require("../../../functions/musicStatsEngine.js");
 const { safeDeferReply, safeEditReply, safeDeferUpdate } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
@@ -212,6 +213,14 @@ module.exports = {
                 const track = hydrateStoredTrack(client, selected, interaction.user);
                 const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
                 player.queue.add(track);
+                if (interaction.user?.id) {
+                    void recordTrackRequest(client, {
+                        userId: interaction.user.id,
+                        guildId: interaction.guildId,
+                        track,
+                        requestOrigin: "favorite",
+                    }).catch(() => {});
+                }
                 if (!wasPlaying) {
                     const outcome = await startPlayerIfIdle(client, player, {
                         guild: interaction.guild,
@@ -240,6 +249,14 @@ module.exports = {
 
             const wasPlaying = isPlayerActivelyPlayingOrPausedTrack(player);
             const staged = enqueueTracksStaged(client, player, tracks, { chunkSize: 50 });
+            if (tracks[0] && interaction.user?.id) {
+                void recordTrackRequest(client, {
+                    userId: interaction.user.id,
+                    guildId: interaction.guildId,
+                    track: tracks[0],
+                    requestOrigin: "favorite",
+                }).catch(() => {});
+            }
             if (!wasPlaying) {
                 const outcome = await startPlayerIfIdle(client, player, {
                     guild: interaction.guild,

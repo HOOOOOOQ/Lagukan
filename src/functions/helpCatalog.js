@@ -16,28 +16,58 @@ const HELP_CATEGORIES = {
         label: "Home",
         title: "🏠 Ringkasan Bantuan & Panduan Cepat",
         emoji: "🏠",
-        description: "Ringkasan platform musik, kategori fitur, dan panduan mulai cepat.",
+        description: "Ringkasan platform musik, kategori fitur, profil 666!cek, dan panduan mulai cepat.",
     },
     music: {
         id: "music",
         label: "Music",
-        title: "🎵 Kategori: MUSIC (Pemutar & Kontrol Antrean)",
+        title: "🎵 Kategori: MUSIC (Pemutar, Radio, Sleep & Party)",
         emoji: "🎵",
-        description: "Perintah pemutaran lagu multi-platform, antrean, navigasi lagu, volume, dan lirik.",
+        description: "Perintah pemutaran lagu multi-platform, Radio Mode, Sleep Timer, Music Party, antrean, volume, & lirik.",
     },
     playlist: {
         id: "playlist",
         label: "Playlist",
         title: "📂 Kategori: PLAYLIST, FAVORITE & HISTORY",
         emoji: "📂",
-        description: "Manajemen playlist pribadi lintas server, playlist bersama server, daftar lagu favorit, dan riwayat lagu.",
+        description: "Manajemen playlist pribadi lintas server (buat, ganti nama, tambah, hapus, putar), lagu favorit, & riwayat.",
+    },
+    profile: {
+        id: "profile",
+        label: "Personal Profile",
+        title: "👤 Kategori: PERSONAL PROFILE, WRAPPED & LEADERBOARD",
+        emoji: "👤",
+        description:
+            "Kartu profil musik (`666!cek`, `666!cek @user`, `/musicprofile`), Listener Level & XP (`/musicrank`), `/wrapped`, & `/musicleaderboard`.",
     },
     settings: {
         id: "settings",
-        label: "Music Settings",
-        title: "⚙️ Kategori: MUSIC SETTINGS",
+        label: "Server Settings",
+        title: "⚙️ Kategori: SERVER SETTINGS & REQUEST PANEL",
         emoji: "⚙️",
-        description: "Pengaturan Smart Autoplay, efek audio Filter/Equalizer, mode 24/7, DJ Mode, DJ Role, dan Auto-Leave.",
+        description:
+            "Voice Channel Music Request (`/musicrequest-config`), Smart Autoplay, Filter Audio, 24/7, Music Config, & Custom Role.",
+    },
+    dj: {
+        id: "dj",
+        label: "DJ System",
+        title: "🎧 Kategori: DJ SYSTEM",
+        emoji: "🎧",
+        description: "Kontrol hak akses pemutar musik server berbasis Role ID menggunakan `/dj` dan `/musicconfig`.",
+    },
+    games: {
+        id: "games",
+        label: "Music Games",
+        title: "🎮 Kategori: MUSIC GAMES",
+        emoji: "🎮",
+        description: "Mini-game musik interaktif di server: tebak potongan lagu (`/guessthesong`) dan adu lagu voting (`/musicbattle`).",
+    },
+    premium: {
+        id: "premium",
+        label: "Premium",
+        title: "💎 Kategori: PREMIUM SYSTEM",
+        emoji: "💎",
+        description: "Status akses Premium terverifikasi, kuota ekstra playlist/favorit/wrapped, & kustomisasi tema dashboard server.",
     },
     customrole: {
         id: "customrole",
@@ -51,8 +81,20 @@ const HELP_CATEGORIES = {
         label: "Admin",
         title: "🛡️ Kategori: ADMIN, LOGS & UTILITAS",
         emoji: "🛡️",
-        description: "Konfigurasi Server Tag Logger, Server Tag Auto Role, Voice Activity Logger, statistik, & utilitas.",
+        description: "Konfigurasi Server Tag Logger, Server Tag Auto Role, Voice Activity Logger, statistik, & utilitas sistem.",
     },
+};
+
+const PREFIX_PROFILE_DOC = {
+    name: "666!cek",
+    isPrefix: true,
+    categoryKey: "profile",
+    func: "Menampilkan Kartu Profil Musik Lagukan lengkap milikmu sendiri (`666!cek`) atau member lain (`666!cek @user`) beserta 5 tombol interaktif.",
+    usage: "666!cek [@user | user_id]",
+    params: "Opsional: `@user` atau `user_id` (kosongkan untuk melihat profil musik milik sendiri)",
+    example: "666!cek • 666!cek @Teman",
+    permission: "Semua anggota server di text channel",
+    limits: "Statistik dihitung murni dari pemutaran nyata; melihat profil user lain bersifat read-only.",
 };
 
 const COMMAND_DOCS = [
@@ -249,6 +291,36 @@ const COMMAND_DOCS = [
         permission: "Semua anggota server",
         limits: "Identik dengan `/lyrics`; otomatis membagi halaman jika lirik panjang.",
     },
+    {
+        name: "sleep",
+        categoryKey: "music",
+        func: "Mengatur Sleep Timer tunggal per server (15m, 30m, 45m, 60m, atau kustom) untuk menghentikan musik otomatis.",
+        usage: "/sleep preset:<15|30|45|60|custom|status|cancel> [custom_minutes] [leave_voice] [clear_queue]",
+        params: "Wajib: `preset` • Opsional: `custom_minutes` (1-720), `leave_voice`, `clear_queue`",
+        example: "/sleep preset:30 • /sleep preset:custom custom_minutes:90 leave_voice:true",
+        permission: "Anggota di voice yang sama (DJ Role/Admin jika DJ Mode aktif)",
+        limits: "Hanya 1 timer aktif per server (timer baru menggantikan timer lama secara aman).",
+    },
+    {
+        name: "radio",
+        categoryKey: "music",
+        func: "Menyalakan Radio Mode (stasiun genre berkelanjutan) atau Auto DJ pintar tanpa pengulangan lagu.",
+        usage: "/radio <station|autodj|custom|status|stop> ...",
+        params: "Subcommand wajib: `station genre:<pilihan>`, `autodj`, `custom query:<tema>`, `status`, atau `stop`",
+        example: "/radio station genre:indonesian_pop • /radio autodj • /radio stop",
+        permission: "Anggota di voice channel (DJ Role/Admin jika DJ Mode aktif)",
+        limits: "Memverifikasi source audio yang valid sebelum antrean dan mencegah duplikasi 30 lagu terakhir.",
+    },
+    {
+        name: "musicparty",
+        categoryKey: "music",
+        func: "Membuat dan mengelola sesi mendengarkan bersama (Music Party) lengkap dengan Party Host & Vote Skip di server ini.",
+        usage: "/musicparty <create|join|leave|queue|host|transfer|voteskip|close> ...",
+        params: "Subcommand wajib (`create [name]`, `join`, `leave`, `queue`, `host`, `transfer user:@User`, `voteskip`, `close`)",
+        example: "/musicparty create name:Malam Minggu • /musicparty voteskip",
+        permission: "Anggota di voice channel yang sama; `transfer`/`close` khusus Party Host atau Admin",
+        limits: "Berjalan dalam 1 voice channel server aktif (sesuai arsitektur single-guild voice Discord).",
+    },
 
     // =========================================================================
     // PLAYLIST (3 Commands: /playlist, /favorite, /history)
@@ -256,12 +328,12 @@ const COMMAND_DOCS = [
     {
         name: "playlist",
         categoryKey: "playlist",
-        func: "Mengelola dan memutar Playlist Pribadi (lintas server) maupun Playlist Server bersama.",
-        usage: "/playlist <create|add|savequeue|load|view|list|remove|delete> ...",
-        params: "Subcommand wajib (`create`, `add`, `savequeue`, `load`, `view`, `list`, `remove`, `delete`) + `name` & `scope` (`personal`/`server`)",
-        example: "/playlist create name:Santai scope:personal • /playlist load name:Santai shuffle:true",
-        permission: "Semua user untuk `personal` & `load`/`view`; `Manage Server`/DJ Role untuk ubah `server` playlist",
-        limits: "Maks. 25 playlist per pemilik/server dan maks. 300 lagu per playlist.",
+        func: "Mengelola dan memutar Playlist Pribadi (lintas server) maupun Playlist Server bersama (termasuk ganti nama).",
+        usage: "/playlist <create|rename|add|play|load|savequeue|view|list|remove|delete> ...",
+        params: "Subcommand wajib (`create`, `rename`, `add`, `play`, `load`, `savequeue`, `view`, `list`, `remove`, `delete`) + `name` & `scope`",
+        example: "/playlist create name:Santai • /playlist rename name:Santai new_name:Fokus • /playlist play name:Fokus",
+        permission: "Semua user untuk `personal`; `Manage Server`/DJ Role untuk modifikasi `server` playlist",
+        limits: "Kuota standar 25 playlist & 300 lagu/playlist (otomatis meningkat hingga 200 playlist untuk akun Premium).",
     },
     {
         name: "favorite",
@@ -271,22 +343,76 @@ const COMMAND_DOCS = [
         params: "Subcommand wajib: `add [query]`, `list`, `play [position] [shuffle]`, `remove position:<no>`, `clear`",
         example: "/favorite add • /favorite list • /favorite play shuffle:true",
         permission: "Semua anggota server (`play` membutuhkan koneksi ke voice channel)",
-        limits: "Maksimal 100 lagu favorit tersimpan per akun pengguna.",
+        limits: "Kuota standar 100 lagu favorit per akun (hingga 1.000 lagu untuk akun Premium).",
     },
     {
         name: "history",
         categoryKey: "playlist",
-        func: "Melihat daftar 50 lagu terakhir yang diputar di server atau memutar ulang lagu dari riwayat.",
-        usage: "/history [play_index:<1-50>] [clear:<true|false>]",
-        params: "Opsional: `play_index` (putar ulang nomor riwayat), `clear` (hapus riwayat server)",
-        example: "/history • /history play_index:1",
-        permission: "Semua anggota untuk melihat/putar; `Manage Server` atau DJ Role untuk `clear:true`",
-        limits: "Menyimpan maksimal 50 riwayat lagu terbaru per server di MongoDB.",
+        func: "Melihat riwayat mendengarkan Personal kamu maupun Recently Played Server serta memutar ulang lagu.",
+        usage: "/history [scope:<personal|server>] [play_index:<1-50>] [clear:<true|false>]",
+        params: "Opsional: `scope` (`personal`/`server`), `play_index` (putar ulang nomor riwayat), `clear` (hapus riwayat server)",
+        example: "/history scope:personal • /history play_index:1",
+        permission: "Semua anggota untuk melihat/putar; `Manage Server` untuk `clear:true`",
+        limits: "Riwayat personal mencatat durasi dengar nyata yang disimpan di MongoDB.",
     },
 
     // =========================================================================
-    // MUSIC SETTINGS (5 Commands: /autoplay, /filter, /247, /dj, /musicconfig)
+    // PERSONAL PROFILE, WRAPPED & LEADERBOARD (4 Slash Commands + 666!cek)
     // =========================================================================
+    {
+        name: "musicprofile",
+        categoryKey: "profile",
+        func: "Menampilkan Kartu Profil Musik Lagukan lengkap (Level, XP, Waktu Dengar, Top Lagu/Artis, & 5 tombol interaktif).",
+        usage: "/musicprofile [user:@User]",
+        params: "Opsional: `user` (anggota yang ingin dilihat profil musiknya; bisa juga via `666!cek @user`)",
+        example: "/musicprofile • /musicprofile user:@Teman",
+        permission: "Semua anggota server",
+        limits: "Data dihitung murni dari pemutaran lagu nyata; profil member lain bersifat read-only.",
+    },
+    {
+        name: "musicrank",
+        categoryKey: "profile",
+        func: "Melihat Listener Level, progres bar Music XP menuju level berikutnya, dan peringkat pendengar di server.",
+        usage: "/musicrank [user:@User]",
+        params: "Opsional: `user` (kosongkan untuk melihat level & rank milik sendiri)",
+        example: "/musicrank • /musicrank user:@Teman",
+        permission: "Semua anggota server",
+        limits: "XP hanya diperoleh dari lagu yang benar-benar diputar (dilengkapi anti-farming lagu berulang).",
+    },
+    {
+        name: "wrapped",
+        categoryKey: "profile",
+        func: "Menampilkan ringkasan Music Wrapped personal berhalaman (Top Lagu, Top Artis, Genre, Hari & Jam Teraktif).",
+        usage: "/wrapped [period:<alltime|weekly|monthly>] [user:@User]",
+        params: "Opsional: `period` (`alltime`, `weekly`, `monthly`), `user`",
+        example: "/wrapped • /wrapped period:weekly • /wrapped period:monthly",
+        permission: "Semua anggota server",
+        limits: "Menampilkan pemberitahuan jujur apabila riwayat pemutaran pada periode tersebut masih kosong.",
+    },
+    {
+        name: "musicleaderboard",
+        categoryKey: "profile",
+        func: "Menampilkan 6 papan peringkat musik khusus server ini (Active Listener, Listening Time, Top Songs, Top Artists, Weekly, Monthly).",
+        usage: "/musicleaderboard [mode:<active|songs|artists|time|weekly|monthly>]",
+        params: "Opsional: `mode` (juga dapat diganti langsung lewat dropdown interaktif)",
+        example: "/musicleaderboard • /musicleaderboard mode:weekly",
+        permission: "Semua anggota server",
+        limits: "Peringkat diisolasi khusus aktivitas nyata di masing-masing server (`guildId`).",
+    },
+
+    // =========================================================================
+    // SERVER SETTINGS & DJ SYSTEM
+    // =========================================================================
+    {
+        name: "musicrequest-config",
+        categoryKey: "settings",
+        func: "Mengatur channel khusus Voice Channel Music Request Panel agar member bisa request lagu tanpa `/play`.",
+        usage: "/musicrequest-config <setup|settings|refresh|disable> ...",
+        params: "Subcommand wajib: `setup channel:#ch [cooldown] [max_queue] [links_only]`, `settings`, `refresh`, `disable`",
+        example: "/musicrequest-config setup channel:#request-musik cooldown:10 max_queue:5",
+        permission: "`Manage Server` (`ManageGuild`)",
+        limits: "Dilengkapi validasi voice channel, cooldown per user, batas antrean per user, & filter link aman.",
+    },
     {
         name: "autoplay",
         categoryKey: "settings",
@@ -319,13 +445,13 @@ const COMMAND_DOCS = [
     },
     {
         name: "dj",
-        categoryKey: "settings",
-        func: "Mengatur status DJ Mode dan menetapkan DJ Role yang berhak mengontrol pemutar musik di server.",
+        categoryKey: "dj",
+        func: "Mengatur status DJ Mode dan menetapkan DJ Role berdasarkan Role ID server untuk membatasi kontrol pemutar.",
         usage: "/dj [mode:<enable|disable>] [role:@Role] [clear_role:<true|false>]",
         params: "Opsional: `mode` (`enable`/`disable`), `role` (Role DJ), `clear_role` (hapus DJ Role)",
         example: "/dj mode:enable role:@DJ • /dj mode:disable",
         permission: "`Manage Server` (`ManageGuild`)",
-        limits: "Role `@everyone` ditolak otomatis demi keamanan kontrol server.",
+        limits: "Diverifikasi ketat menggunakan Role ID & `guildId` (bukan nama role); member biasa tetap dapat request lagu.",
     },
     {
         name: "musicconfig",
@@ -336,6 +462,44 @@ const COMMAND_DOCS = [
         example: "/musicconfig auto_leave:enable auto_leave_timeout:120 default_volume:90",
         permission: "`Manage Server` (`ManageGuild`)",
         limits: "`auto_leave_timeout` 5–3600 detik; `@everyone` tidak diizinkan sebagai DJ Role.",
+    },
+
+    // =========================================================================
+    // MUSIC GAMES (2 Commands: /guessthesong, /musicbattle)
+    // =========================================================================
+    {
+        name: "guessthesong",
+        categoryKey: "games",
+        func: "Memulai mini-game tebak judul lagu dari potongan audio di voice channel dengan 3 tingkat kesulitan & skor.",
+        usage: "/guessthesong <start|stop|leaderboard> [difficulty:<easy|medium|hard>]",
+        params: "Subcommand wajib: `start [difficulty]`, `stop`, atau `leaderboard`",
+        example: "/guessthesong start difficulty:medium • /guessthesong leaderboard",
+        permission: "Anggota di voice channel untuk `start`; semua anggota untuk `leaderboard`",
+        limits: "Judul lagu disembunyikan rapat dari Now Playing Dashboard hingga ronde berakhir.",
+    },
+    {
+        name: "musicbattle",
+        categoryKey: "games",
+        func: "Pertandingan adu lagu pilihan antara 2 anggota server dengan voting tombol anti-duplikat & leaderboard.",
+        usage: "/musicbattle <start|stats|leaderboard> ...",
+        params: "Subcommand wajib: `start opponent:@User [your_song] [opponent_song] [vote_seconds]`, `stats`, `leaderboard`",
+        example: "/musicbattle start opponent:@Teman your_song:Hivi Remaja vote_seconds:45",
+        permission: "Semua anggota server",
+        limits: "Setiap anggota server hanya dihitung maksimal 1 suara per battle (anti double-vote).",
+    },
+
+    // =========================================================================
+    // PREMIUM SYSTEM (1 Command: /premium)
+    // =========================================================================
+    {
+        name: "premium",
+        categoryKey: "premium",
+        func: "Melihat status & kuota akses Premium terverifikasi, kustomisasi warna/judul dashboard server, & kelola akses.",
+        usage: "/premium <status|customize|grant|revoke> ...",
+        params: "Subcommand wajib: `status`, `customize [accent_color] [dashboard_title]`, `grant` (Dev), `revoke` (Dev)",
+        example: "/premium status • /premium customize accent_color:#00E5FF dashboard_title:Lagukan VIP",
+        permission: "Semua anggota untuk `status`; `Manage Server` untuk `customize`; Owner/Dev Bot untuk `grant`/`revoke`",
+        limits: "Dikelola secara resmi oleh Admin/Developer Bot tanpa klaim atau pembayaran otomatis palsu.",
     },
 
     // =========================================================================
@@ -536,8 +700,10 @@ function getVerifiedCommandDocs(client) {
 }
 
 function getDocsForSection(allDocs, sectionKey) {
+    if (sectionKey === "profile") {
+        return [PREFIX_PROFILE_DOC, ...allDocs.filter((d) => d.categoryKey === "profile")];
+    }
     if (sectionKey === "settings") {
-        // Group Music Settings + Custom Role under the [Settings] quick button while keeping Custom Role selectable too
         return allDocs.filter((d) => d.categoryKey === "settings" || d.categoryKey === "customrole");
     }
     if (sectionKey === "music_settings_only") {
@@ -547,8 +713,9 @@ function getDocsForSection(allDocs, sectionKey) {
 }
 
 function formatCommandField(doc) {
+    const label = doc.isPrefix ? `\`${doc.name}\` *(Prefix)*` : `\`/${doc.name}\``;
     return {
-        name: `\`/${doc.name}\``,
+        name: label,
         value: [
             `• **Fungsi:** ${doc.func}`,
             `• **Cara Pakai:** \`${doc.usage}\``,
@@ -565,6 +732,7 @@ function formatCommandField(doc) {
 
 module.exports = {
     HELP_CATEGORIES,
+    PREFIX_PROFILE_DOC,
     COMMAND_DOCS,
     getVerifiedCommandDocs,
     getDocsForSection,

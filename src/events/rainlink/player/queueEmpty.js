@@ -11,6 +11,12 @@ const {
     getGuildMusicSettings,
 } = require("../../../functions/musicPermissions.js");
 const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
+const {
+    getGuildRadioState,
+    stopGuildRadioMode,
+    pickNextRadioOrAutoDjTrack,
+    clearAutoResumeSnapshot,
+} = require("../../../functions/radioAndSleepManager.js");
 
 module.exports = async (client, player) => {
     if (
@@ -28,9 +34,10 @@ module.exports = async (client, player) => {
         return;
     }
 
-    // Honor explicit user Stop (/stop or [Stop] button): do not auto-restart Autoplay or auto-leave immediately
+    // Honor explicit user Stop (/stop or [Stop] button): do not auto-restart Autoplay/Radio or auto-leave immediately
     if (player._manualStopAt && Date.now() - player._manualStopAt < 5000) {
         player._manualStopAt = 0;
+        clearAutoResumeSnapshot(player.guildId);
         await cleanupNowPlayingMessage(player, true);
         return;
     }
@@ -38,6 +45,33 @@ module.exports = async (client, player) => {
     await cleanupNowPlayingMessage(player, true);
 
     const channel = client.channels.cache.get(player.textId);
+
+    // 1. Radio Mode & Auto DJ continuous verified feed
+    const radioState = getGuildRadioState(player.guildId);
+    if (radioState?.enabled) {
+        const nextRadioTrack = await pickNextRadioOrAutoDjTrack(client, player);
+        if (
+            isGuildManuallyDisconnected(client, player.guildId) ||
+            isGuildLeavingInProgress(player.guildId) ||
+            player.state === PLAYER_STATE_DESTROYED ||
+            player.sudoDestroy
+        ) {
+            return;
+        }
+
+        if (nextRadioTrack) {
+            player.queue.add(nextRadioTrack);
+            if (!player.playing && player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
+                player.paused = false;
+                await Promise.resolve(player.play()).catch(() => {});
+            }
+            return;
+        }
+
+        // Cleanly stop Radio Mode if no valid replacement source could be verified
+        stopGuildRadioMode(player.guildId);
+    }
+
     const autoplayEnabled = isGuildAutoplayEnabled(client, player.guildId);
 
     if (autoplayEnabled) {

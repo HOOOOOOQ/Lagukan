@@ -4,6 +4,8 @@ const { createDataGuild, createDataUser } = require("../../../functions/createDa
 const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
 const { handleTagRoleComponentInteraction, handleCrossGuildUserTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
 const { handleCustomRoleInteraction } = require("../../../functions/customRoleSystem.js");
+const { handleRequestPanelInteraction } = require("../../../functions/voiceRequestSystem.js");
+const { handleMusicBattleInteraction } = require("../../../functions/musicGamesSystem.js");
 const { buildSupportComponents, safeReply, isUnknownInteractionError } = require("../../../functions/interactionResponder.js");
 const Logger = require("../../../utils/logger");
 
@@ -62,6 +64,34 @@ module.exports = async (client, interaction) => {
         } catch (err) {
             if (!isUnknownInteractionError(err)) {
                 Logger.error("[CustomRole] Error pada interaksi Custom Role:", err);
+            }
+        }
+        return;
+    }
+
+    // Handle Voice Channel Music Request Panel buttons & modals (`mreq:*`)
+    if (typeof interaction.customId === "string" && interaction.customId.startsWith("mreq:")) {
+        createDataGuild(client, interaction.guild).catch(() => {});
+        createDataUser(client, interaction.user).catch(() => {});
+        try {
+            await handleRequestPanelInteraction(client, interaction);
+        } catch (err) {
+            if (!isUnknownInteractionError(err)) {
+                Logger.error("[VoiceRequest] Error pada interaksi Request Panel:", err);
+            }
+        }
+        return;
+    }
+
+    // Handle Music Battle submission & voting buttons/modals (`mbat:*`)
+    if (typeof interaction.customId === "string" && interaction.customId.startsWith("mbat:")) {
+        createDataGuild(client, interaction.guild).catch(() => {});
+        createDataUser(client, interaction.user).catch(() => {});
+        try {
+            await handleMusicBattleInteraction(client, interaction);
+        } catch (err) {
+            if (!isUnknownInteractionError(err)) {
+                Logger.error("[MusicBattle] Error pada interaksi Music Battle:", err);
             }
         }
         return;
