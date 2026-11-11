@@ -42,7 +42,8 @@ function buildHomeEmbed(client, interaction, allDocs) {
         .setDescription(
             `Halo **${requesterLabel}**! Saya **${botName}**, bot musik multi-platform, profil pendengar, & mini-game komunitas Discord.\n` +
                 `Mendukung **YouTube, YouTube Music, Spotify** *(resolusi audio cerdas)*, **SoundCloud, Deezer, Bandcamp, & Direct Audio URL**.\n` +
-                `💡 **Cek Profil Cepat (Prefix):** Ketik \`666!cek\` atau \`666!cek @user\` langsung di chat!\n\n` +
+                `💡 **Cek Profil Cepat (Prefix):** Ketik \`666!cek\` atau \`666!cek @user\` langsung di chat!\n` +
+                `🤖 **666 Text Assistant (Lokal):** Ketik \`666 help\`, \`666 play <judul>\`, atau \`666 dongengin aku\` langsung di chat!\n\n` +
                 `Pilih salah satu dari **8 Kategori** pada **Select Menu** atau klik tombol di bawah untuk melihat detail setiap perintah.`,
         )
         .addFields(

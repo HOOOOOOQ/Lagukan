@@ -373,6 +373,11 @@ if [ -f "src/functions/slashCommandValidator.js" ] && [ "\$SELF_TEST_MODE" = "0"
   npm run validate:commands
 fi
 
+if [ -f "src/features/assistant/assistantSelfTest.js" ] && [ "\$SELF_TEST_MODE" = "0" ]; then
+  info "Memvalidasi modul lokal 666 Text Assistant..."
+  npm run validate:assistant
+fi
+
 report_stage "bot_ready"
 
 # ------------------------------------------------------------------------------
