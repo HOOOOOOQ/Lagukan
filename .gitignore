@@ -90,6 +90,8 @@ out
 # Nuxt.js build / generate output
 .nuxt
 dist
+web-installer/public-build
+web-installer/.data
 
 # Gatsby files
 .cache/

@@ -354,8 +354,10 @@ function generateColorOrGradientPng(hexColors, direction = "horizontal", width =
 // Validation, Permissions & Discord Feature Detection Helpers
 // ============================================================================
 
+const { isCloudDatabaseReady } = require("../databases/cloudAdapter");
+
 function isMongoReady() {
-    return mongoose.connection?.readyState === 1;
+    return mongoose.connection?.readyState === 1 || isCloudDatabaseReady();
 }
 
 function getCustomRoleModel(client) {

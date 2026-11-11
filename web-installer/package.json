@@ -1,0 +1,28 @@
+{
+    "name": "lagukan-web-installer",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Official Termux Web Installer & Central Cloud Database Gateway for Lagukan Discord Music Bot",
+    "main": "server/index.js",
+    "engines": {
+        "node": ">=18.0.0"
+    },
+    "scripts": {
+        "dev": "vite --host 0.0.0.0 --port 5173",
+        "build": "vite build",
+        "start": "node server/index.js",
+        "preview": "node server/index.js"
+    },
+    "dependencies": {
+        "dotenv": "^17.3.1",
+        "express": "^4.21.2",
+        "lucide-react": "^0.511.0",
+        "mongoose": "^9.2.1",
+        "react": "^19.1.0",
+        "react-dom": "^19.1.0"
+    },
+    "devDependencies": {
+        "@vitejs/plugin-react": "^4.5.2",
+        "vite": "^6.3.5"
+    }
+}

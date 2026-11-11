@@ -12,7 +12,13 @@ module.exports = {
     defaultVolume: parseInt(process.env.DEFAULT_VOLUME) || 100, // Default volume when bot joins a voice channel
     minVolume: parseInt(process.env.MIN_VOLUME) || 1, // min volume
     maxVolume: parseInt(process.env.MAX_VOLUME) || 100, // max volume
-    mongoUri: process.env.MONGO_URI || " ", // your MongoDB Uri
+    mongoUri: sanitizeEnvValue(process.env.MONGO_URI) || "", // Direct MongoDB URI (owner/self-hosted mode)
+    cloudDb: {
+        enabled: parseBoolean(process.env.LAGUKAN_CLOUD_MODE, false),
+        apiUrl: sanitizeEnvValue(process.env.LAGUKAN_API_URL),
+        installationId: sanitizeEnvValue(process.env.LAGUKAN_INSTALL_ID),
+        apiKey: sanitizeEnvValue(process.env.LAGUKAN_API_KEY),
+    },
     supportServerUrl: process.env.SUPPORT_SERVER_URL || " ", // your support server url
 
     // VOICE ACTIVITY LOGGER DETAILS (Logs directly to active Voice Channel Text Chat)
