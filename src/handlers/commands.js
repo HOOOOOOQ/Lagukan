@@ -1,30 +1,91 @@
 const { readdirSync } = require("node:fs");
 const path = require("node:path");
 const Logger = require("../utils/logger");
+const {
+    DISCORD_LIMITS,
+    validateSlashCommands,
+    parseDiscordRegistrationError,
+    formatIssueDetailLines,
+} = require("../functions/slashCommandValidator");
 
 module.exports = (client) => {
     try {
         const data = [];
+        const commandMeta = new Map();
         const interactionRoot = path.join(__dirname, "../commands/interaction");
 
-        readdirSync(interactionRoot).forEach((dir) => {
-            const dirPath = path.join(interactionRoot, dir);
-            const commands = readdirSync(dirPath).filter((file) => file.endsWith(".js"));
+        readdirSync(interactionRoot)
+            .sort()
+            .forEach((dir) => {
+                const dirPath = path.join(interactionRoot, dir);
+                const commands = readdirSync(dirPath)
+                    .filter((file) => file.endsWith(".js"))
+                    .sort();
 
-            for (const file of commands) {
-                const pull = require(path.join(dirPath, file));
+                for (const file of commands) {
+                    const pull = require(path.join(dirPath, file));
 
-                if (pull.name) {
-                    client.slash.set(pull.name, pull);
-                    data.push(pull);
-                } else {
-                    continue;
+                    if (pull.name) {
+                        client.slash.set(pull.name, pull);
+                        data.push(pull);
+                        commandMeta.set(pull, `${dir}/${file}`);
+                        commandMeta.set(pull.name, `${dir}/${file}`);
+                    } else {
+                        continue;
+                    }
                 }
+            });
+
+        const logValidationIssues = (validationReport, contextLabel) => {
+            Logger.error(
+                `Validasi slash command menemukan ${validationReport.issues.length} masalah pada ${contextLabel} (total ${validationReport.totalCommands} command, tidak ada command yang dihapus diam-diam):`,
+            );
+            validationReport.issues.forEach((issue, idx) => {
+                Logger.error(`Detail Masalah Slash Command #${idx + 1}:\n${formatIssueDetailLines(issue)}`);
+            });
+        };
+
+        const logSlashRegistrationFailure = (err, targetLabel) => {
+            const parsedDiagnostics = parseDiscordRegistrationError(err, data, commandMeta);
+
+            if (parsedDiagnostics.length > 0) {
+                Logger.error(
+                    `Gagal mendaftarkan slash command pada ${targetLabel} (DiscordAPIError[${err?.code || "50035"}]). Detail command yang bermasalah:`,
+                );
+                parsedDiagnostics.forEach((diag, idx) => {
+                    Logger.error(`Detail Error Registrasi #${idx + 1}:\n${formatIssueDetailLines(diag)}`);
+                });
+                return;
             }
-        });
+
+            const fallbackValidation = validateSlashCommands(data, commandMeta);
+            if (!fallbackValidation.valid) {
+                logValidationIssues(fallbackValidation, targetLabel);
+            }
+
+            Logger.error(`Gagal mendaftarkan slash command pada ${targetLabel}:`, err);
+        };
+
+        // Run pre-registration validation immediately when slash commands are loaded
+        const initialValidation = validateSlashCommands(data, commandMeta);
+        if (!initialValidation.valid) {
+            logValidationIssues(initialValidation, "saat pemuatan awal (pre-registration)");
+        } else {
+            Logger.info(
+                `Validasi slash command berhasil: ${initialValidation.totalCommands} command valid (batas deskripsi Discord <= ${DISCORD_LIMITS.MAX_DESCRIPTION_LENGTH} karakter)`,
+            );
+        }
+
+        client.validateSlashCommands = () => validateSlashCommands(data, commandMeta);
 
         const syncGuildCommands = async (guild) => {
             if (!guild?.commands?.set) return false;
+
+            const preSyncValidation = validateSlashCommands(data, commandMeta);
+            if (!preSyncValidation.valid) {
+                logValidationIssues(preSyncValidation, `server "${guild.name}" (${guild.id}) sebelum registrasi`);
+                return false;
+            }
 
             try {
                 await guild.commands.set(data);
@@ -39,7 +100,7 @@ module.exports = (client) => {
                         `Slash command ditolak di server "${guild.name}" (${guild.id}) karena scope "applications.commands" belum diizinkan. Buka link berikut untuk mengaktifkannya tanpa kick bot: ${inviteFixUrl}`,
                     );
                 } else {
-                    Logger.error(`Gagal mendaftarkan slash command di server "${guild.name}" (${guild.id}):`, err);
+                    logSlashRegistrationFailure(err, `server "${guild.name}" (${guild.id})`);
                 }
                 return false;
             }
@@ -47,6 +108,12 @@ module.exports = (client) => {
 
         client.on("clientReady", async () => {
             try {
+                const preReadyValidation = validateSlashCommands(data, commandMeta);
+                if (!preReadyValidation.valid) {
+                    logValidationIssues(preReadyValidation, "proses clientReady sebelum sinkronisasi Discord API");
+                    return;
+                }
+
                 const guilds = [...client.guilds.cache.values()];
                 let syncedGuilds = 0;
 
@@ -62,13 +129,18 @@ module.exports = (client) => {
                     if (guilds.length > 0 && syncedGuilds > 0) {
                         await client.application.commands.set([]).catch(() => {});
                     } else if (guilds.length === 0) {
-                        await client.application.commands.set(data);
+                        try {
+                            await client.application.commands.set(data);
+                        } catch (globalErr) {
+                            logSlashRegistrationFailure(globalErr, "registrasi global aplikasi");
+                            return;
+                        }
                     }
                 }
 
                 Logger.info(`${client.slash.size} Slash commands loaded & synced instantly to ${syncedGuilds}/${guilds.length} server`);
             } catch (syncError) {
-                Logger.error("Failed to register slash commands with Discord API:", syncError);
+                logSlashRegistrationFailure(syncError, "sinkronisasi slash command ke Discord API");
             }
         });
 
@@ -86,24 +158,28 @@ module.exports = (client) => {
     try {
         const messageRoot = path.join(__dirname, "../commands/message");
 
-        readdirSync(messageRoot).forEach((dir) => {
-            const dirPath = path.join(messageRoot, dir);
-            const commands = readdirSync(dirPath).filter((file) => file.endsWith(".js"));
+        readdirSync(messageRoot)
+            .sort()
+            .forEach((dir) => {
+                const dirPath = path.join(messageRoot, dir);
+                const commands = readdirSync(dirPath)
+                    .filter((file) => file.endsWith(".js"))
+                    .sort();
 
-            for (const file of commands) {
-                const command = require(path.join(dirPath, file));
+                for (const file of commands) {
+                    const command = require(path.join(dirPath, file));
 
-                if (command.name) {
-                    client.prefix.set(command.name, command);
-                } else {
-                    continue;
+                    if (command.name) {
+                        client.prefix.set(command.name, command);
+                    } else {
+                        continue;
+                    }
+
+                    if (command.aliases && Array.isArray(command.aliases)) {
+                        command.aliases.map((alias) => client.aliases.set(alias, command.name));
+                    }
                 }
-
-                if (command.aliases && Array.isArray(command.aliases)) {
-                    command.aliases.map((alias) => client.aliases.set(alias, command.name));
-                }
-            }
-        });
+            });
 
         Logger.info(`${client.prefix.size} Prefix commands loaded`);
     } catch (error) {

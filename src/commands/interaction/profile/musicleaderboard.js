@@ -4,7 +4,7 @@ const { safeDeferReply, safeEditReply, safeDeferUpdate, safeReply } = require(".
 
 module.exports = {
     name: "musicleaderboard",
-    description: "Lihat papan peringkat musik server (Listener Aktif, Lagu Terpopuler, Artis, Durasi, Mingguan, Bulanan)",
+    description: "Lihat papan peringkat musik server (Aktif, Lagu, Artis, Durasi, Mingguan & Bulanan)",
     category: "profile",
     options: [
         {
