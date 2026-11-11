@@ -78,6 +78,8 @@ npm start
 - ☑️ Server Tag Logger (`LAGUKAN • SERVER TAG LOGGER`) in Bahasa Indonesia with MongoDB statistics (`/setlogs`, `/ceklogs`, `/resetlogs`, `/tagstats`)
 - ☑️ Server Tag Auto Role (`LAGUKAN SERVER TAG AUTO ROLE`) — automatic per-guild role assignment & removal matched by official Discord Server Tag identity (`identity_guild_id`) with interactive dropdown panel (`/settagrole`, `/cektagrole`, `/resettagrole`, `/synctagrole`)
 - ☑️ Custom Role System (`LAGUKAN CUSTOM ROLE SYSTEM`) — modern interactive dashboard (`/customrole` & `/customrole-config`) exclusive to Server Boosters & Admin-approved Roles, supporting custom role name, Color Picker + HEX + presets, 2/3-color & official Discord Holographic gradients with live visual PNG preview, and phone gallery attachment Role Icons (`ROLE_ICONS`)
+- ☑️ **666 Text Assistant** (`666 help`) — 100% local rule-based Discord text assistant (zero external AI APIs or API keys) integrated directly with Rainlink + Lavalink music playback (`666 play <song>`, `666 pause`, `666 resume`, `666 skip`, `666 stop`, `666 volume 50`, `666 queue`, `666 sekarang putar apa`), varied natural Indonesian conversation (`666 halo`, `666 siapa kamu`, etc.), and 60 local stories across 6 categories (`666 dongengin aku`, `666 cerita horor`, `666 cerita romantis`, `666 cerita lucu`, `666 cerita fantasi`, `666 buat cerita pendek`)
+- ☑️ Termux Android Standalone Mode (`npm run start:termux`) & Web Installer (`web-installer/`)
 - ☑️ Auto-leave timeout when inactive/alone (configurable)
 
 ## `📌` Requirements

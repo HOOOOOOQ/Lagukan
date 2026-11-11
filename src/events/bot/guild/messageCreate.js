@@ -7,6 +7,7 @@ const { buildSupportComponents } = require("../../../functions/interactionRespon
 const { buildProfileEmbedAndComponents, attachProfileCollector } = require("../../../functions/musicStatsEngine.js");
 const { handleRequestChannelMessage } = require("../../../functions/voiceRequestSystem.js");
 const { handleGuessTheSongMessage } = require("../../../functions/musicGamesSystem.js");
+const { handleAssistantMessage } = require("../../../features/assistant/assistantHandler.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, message) => {
@@ -50,7 +51,7 @@ module.exports = async (client, message) => {
 
     if (message.content.match(mention)) {
         embed.setDescription(
-            `Hello! I'm **${botName} Music Bot**. Use \`/help\` command to get list of commands (or \`666!cek\` for your music profile).`,
+            `Hello! I'm **${botName} Music Bot**. Use \`/help\` for Slash Commands, \`666 help\` for **666 Text Assistant**, or \`666!cek\` for your music profile.`,
         );
 
         await message.reply({ embeds: [embed] }).catch(() => {});
@@ -116,11 +117,18 @@ module.exports = async (client, message) => {
         return;
     }
 
-    // 2. Active Guess The Song Round Plain-Text Answer Detection
+    // 2. 666 Local Text Assistant (`666 play ...`, `666 halo`, `666 dongengin aku`, `666 help`, etc.)
+    const handledAssistant = await handleAssistantMessage(client, message).catch((err) => {
+        Logger.error("[666Assistant] Unhandled error:", err?.message || err);
+        return false;
+    });
+    if (handledAssistant) return;
+
+    // 3. Active Guess The Song Round Plain-Text Answer Detection
     const handledGuess = await handleGuessTheSongMessage(client, message).catch(() => false);
     if (handledGuess) return;
 
-    // 3. Dedicated Voice Channel Music Request Panel Direct Message Input
+    // 4. Dedicated Voice Channel Music Request Panel Direct Message Input
     if (!userData?.ban?.status) {
         const handledReq = await handleRequestChannelMessage(client, message).catch(() => false);
         if (handledReq) return;
