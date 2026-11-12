@@ -165,6 +165,7 @@ async function startGuessTheSongGame(client, { guild, member, user, channel, dif
     const startedAt = Date.now();
     const session = {
         guildId: gid,
+        botId: client.user?.id || null,
         channelId: String(channel.id),
         channel,
         hostId: String(user.id),
@@ -207,9 +208,10 @@ async function handleGuessTheSongMessage(client, message) {
     if (!message?.guild || message.author?.bot) return false;
     const session = activeGuessSessions.get(String(message.guild.id));
     if (!session || String(message.channel.id) !== session.channelId) return false;
+    if (session.botId && client.user?.id && String(session.botId) !== String(client.user.id)) return false;
 
     const raw = String(message.content || "").trim();
-    if (!raw || raw.startsWith("/") || /^666!cek\b/i.test(raw)) return false;
+    if (!raw || raw.startsWith("/") || /^<@!?\d+>/.test(raw) || /^666(?:\b|!)/i.test(raw)) return false;
 
     const guessNorm = normalizeGuessString(raw);
     if (!guessNorm || guessNorm.length < 2) return false;

@@ -6,6 +6,7 @@ const musicRequestConfigSchema = new mongoose.Schema(
         enabled: { type: Boolean, default: false },
         channelId: { type: String, default: null, index: true },
         messageId: { type: String, default: null },
+        botId: { type: String, default: null },
         cooldownSec: { type: Number, default: 10 },
         maxQueuePerUser: { type: Number, default: 5 },
         linksOnly: { type: Boolean, default: false },

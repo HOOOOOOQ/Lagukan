@@ -322,12 +322,10 @@ if [ "\$PRESERVE_EXISTING_ENV" = "0" ] || [ ! -f ".env" ]; then
 # =========================================================
 BOT_NAME=Lagukan
 TOKEN=\${DISCORD_BOT_TOKEN}
-PREFIX=666!
 EMBED_COLOR=8B5CF6
 STANDALONE_MODE=true
 TIMEZONE=Asia/Jakarta
 VOICE_LOG_ENABLED=true
-SERVER_MEMBERS_INTENT=true
 
 # CENTRAL CLOUD DATABASE GATEWAY (NO DIRECT MONGO_URI NEEDED)
 LAGUKAN_CLOUD_MODE=true
@@ -371,11 +369,6 @@ report_stage "api_test"
 if [ -f "src/functions/slashCommandValidator.js" ] && [ "\$SELF_TEST_MODE" = "0" ]; then
   info "Memvalidasi skema seluruh slash command..."
   npm run validate:commands
-fi
-
-if [ -f "src/features/assistant/assistantSelfTest.js" ] && [ "\$SELF_TEST_MODE" = "0" ]; then
-  info "Memvalidasi modul lokal 666 Text Assistant..."
-  npm run validate:assistant
 fi
 
 report_stage "bot_ready"

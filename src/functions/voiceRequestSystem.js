@@ -22,37 +22,50 @@ const { getOrCreateGuildPlayer, isPlayerActivelyPlayingOrPausedTrack, startPlaye
 const { getPremiumAccess } = require("./premiumSystem.js");
 const { recordTrackRequest } = require("./musicStatsEngine.js");
 const { getGuildPlayer } = require("./voiceSessionManager.js");
+const mongoose = require("mongoose");
 const { refreshNowPlayingDashboard, ensureNowPlayingDashboardVisible, truncateText } = require("./nowPlayingManager.js");
 const { convertTime } = require("./timeFormat.js");
 const { safeReply, safeEditReply, safeDeferReply, safeDeferUpdate } = require("./interactionResponder.js");
+const { isCloudDatabaseReady } = require("../databases/cloudAdapter.js");
 
-// Cache: Map<guildId, ConfigPlainObject>
-const requestConfigCache = new Map();
-// Cooldown: Map<`${guildId}:${userId}`, number>
+// Cooldown: Map<`${botId}:${guildId}:${userId}`, number>
 const requestUserCooldowns = new Map();
+
+function getClientRequestCache(client) {
+    if (!client) return new Map();
+    if (!(client._requestConfigCache instanceof Map)) {
+        client._requestConfigCache = new Map();
+    }
+    return client._requestConfigCache;
+}
 
 async function getGuildRequestConfig(client, guildId) {
     if (!guildId || !client?.musicRequestConfigData) return null;
     const gid = String(guildId);
-    if (requestConfigCache.has(gid)) {
-        return requestConfigCache.get(gid);
+    const cache = getClientRequestCache(client);
+    if (cache.has(gid)) {
+        return cache.get(gid);
+    }
+    if (mongoose.connection.readyState !== 1 && !isCloudDatabaseReady()) {
+        return null;
     }
     const doc = await client.musicRequestConfigData.findOne({ guildId: gid }).catch(() => null);
     const plain = doc ? (typeof doc.toObject === "function" ? doc.toObject() : doc) : null;
-    requestConfigCache.set(gid, plain);
+    cache.set(gid, plain);
     return plain;
 }
 
 async function saveGuildRequestConfig(client, guildId, patch = {}) {
     if (!guildId || !client?.musicRequestConfigData) return null;
     const gid = String(guildId);
+    const cache = getClientRequestCache(client);
     const updated = await client.musicRequestConfigData.findOneAndUpdate(
         { guildId: gid },
         { $set: { guildId: gid, ...patch } },
         { upsert: true, returnDocument: "after" },
     );
     const plain = typeof updated?.toObject === "function" ? updated.toObject() : updated;
-    requestConfigCache.set(gid, plain);
+    cache.set(gid, plain);
     return plain;
 }
 
@@ -275,9 +288,24 @@ async function handleRequestChannelMessage(client, message) {
         return false;
     }
 
-    // Do not intercept prefix commands like 666!cek or !eval
+    // Multi-bot safety: only the specific bot that created/owns this server's Request Panel handles channel text input
+    if (cfg.botId && client.user?.id && String(cfg.botId) !== String(client.user.id)) {
+        return false;
+    }
+    if (!cfg.botId && cfg.messageId && client.user?.id && message.channel.messages) {
+        const panelMsg =
+            message.channel.messages.cache?.get?.(cfg.messageId) ||
+            (await message.channel.messages.fetch?.(cfg.messageId).catch(() => null));
+        if (panelMsg?.author?.id) {
+            cfg.botId = panelMsg.author.id;
+            if (String(panelMsg.author.id) !== String(client.user.id)) {
+                return false;
+            }
+        }
+    }
+
     const rawContent = String(message.content || "").trim();
-    if (!rawContent || /^666!cek\b/i.test(rawContent) || rawContent.startsWith(client.config?.prefix || "!")) {
+    if (!rawContent || /^<@!?\d+>/.test(rawContent) || /^666(?:\b|!)/i.test(rawContent)) {
         return false;
     }
 

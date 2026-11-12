@@ -5,7 +5,6 @@ module.exports = {
     // GENERAL DETAILS
     botName: process.env.BOT_NAME || "Lagukan", // Discord bot name
     token: process.env.TOKEN || " ", // your bot token
-    prefix: process.env.PREFIX || "!", // your default prefix
     dev: [" "], // your Discord user Id & developer user Id
     embedColor: process.env.EMBED_COLOR || "5865F2", // your embeded hex color
     leaveTimeout: parseInt(process.env.LEAVE_TIMEOUT) || 60000, // leave timeout in milliseconds
@@ -26,9 +25,6 @@ module.exports = {
     voiceLog: {
         enabled: parseBoolean(process.env.VOICE_LOG_ENABLED, true),
     },
-
-    // SERVER TAG LOGGER GATEWAY INTENT (Enable SERVER MEMBERS INTENT in Discord Developer Portal)
-    serverMembersIntent: parseBoolean(process.env.SERVER_MEMBERS_INTENT, true),
 
     // RAINLINK DETAILS
     lavalinkSource: process.env.LAVALINK_SOURCE || "sp", // Available Lavalink sources, based on the sources you've enabled in your Lavalink configuration. For example, if you enable the Spotify source, then "sp" will refer to "spsearch". Will be used if "sourceID" option is provided in the play command.

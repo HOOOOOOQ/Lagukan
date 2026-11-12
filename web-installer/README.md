@@ -9,7 +9,7 @@ Website resmi untuk menginstal, mengonfigurasi, dan memantau Discord Music Bot *
 
 ## 1. Arsitektur Keamanan & Isolasi Database Pusat
 
-Hasil audit arsitektur **Lagukan** menunjukkan bahwa bot menggunakan **21 koleksi Mongoose** (`guild`, `user`, `playlist`, `UserMusicProfiles`, `ListeningHistory`, `FavoriteTracks`, `UserPlaylists`, `MusicStatistics`, `MusicWrapped`, `MusicLeaderboard`, `MusicRequestConfig`, `DJConfig`, `MusicParty`, `GuessTheSong`, `MusicBattle`, `PremiumConfig`, `customRole`, `customRoleConfig`, `serverTagConfig`, `serverTagMember`, `serverTagAutoRole`).
+Hasil audit arsitektur **Lagukan** menunjukkan bahwa bot menggunakan **16 koleksi Mongoose** (`guild`, `user`, `playlist`, `UserMusicProfiles`, `ListeningHistory`, `FavoriteTracks`, `UserPlaylists`, `MusicStatistics`, `MusicWrapped`, `MusicLeaderboard`, `MusicRequestConfig`, `DJConfig`, `MusicParty`, `GuessTheSong`, `MusicBattle`, `PremiumConfig`).
 
 Agar pemilik project memegang kendali penuh atas database pusat:
 

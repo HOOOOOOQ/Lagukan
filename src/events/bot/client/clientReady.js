@@ -1,73 +1,66 @@
 const { ActivityType } = require("discord.js");
+const mongoose = require("mongoose");
 const emojiConfig = require("../../../settings/emoji.js");
 const { normalizeGuildData, normalizeUserData } = require("../../../functions/createData.js");
 const { syncGuildDisconnectMemory } = require("../../../functions/voiceSessionManager.js");
-const { initializeServerTagLogger } = require("../../../functions/serverTagLogger.js");
-const { initializeServerTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
-const { initializeCustomRolePanels } = require("../../../functions/customRoleSystem.js");
+const { isCloudDatabaseReady } = require("../../../databases/cloudAdapter.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client) => {
     await emojiConfig(client);
 
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.user?.username || client.config.botName || "Lagukan";
+    const dbReady = mongoose.connection.readyState === 1 || isCloudDatabaseReady();
 
-    if (client.user.username !== botName) {
-        await client.user.setUsername(botName).catch((err) => {
-            Logger.debug(`Skipped updating Discord bot username to ${botName}: ${err.message}`);
-        });
-    }
+    if (dbReady) {
+        const guildData = (await client.guildData.find().catch(() => [])) || [];
 
-    const guildData = await client.guildData.find();
+        for (const x of guildData) {
+            const plain = typeof x.toObject === "function" ? x.toObject() : x;
+            const { _id, __v, ...raw } = plain;
+            const guild = client.guilds.cache.get(x.id);
+            const normalized = normalizeGuildData(client, guild, raw);
 
-    for (const x of guildData) {
-        const { _id, __v, ...raw } = x.toObject();
-        const guild = client.guilds.cache.get(x.id);
-        const normalized = normalizeGuildData(client, guild, raw);
+            client.data.set(`guildData_${x.id}`, normalized);
+            syncGuildDisconnectMemory(x.id, normalized);
 
-        client.data.set(`guildData_${x.id}`, normalized);
-        syncGuildDisconnectMemory(x.id, normalized);
+            if (guild) {
+                await client.guildData
+                    .findOneAndUpdate({ id: x.id }, { $set: normalized }, { upsert: true, returnDocument: "after" })
+                    .catch(() => {});
+            }
+        }
 
-        if (guild) {
-            await client.guildData
-                .findOneAndUpdate({ id: x.id }, { $set: normalized }, { upsert: true, returnDocument: "after" })
-                .catch(() => {});
+        for (const [, guild] of client.guilds.cache) {
+            if (!client.data.has(`guildData_${guild.id}`)) {
+                const normalized = normalizeGuildData(client, guild, { id: guild.id });
+                client.data.set(`guildData_${guild.id}`, normalized);
+
+                await client.guildData
+                    .findOneAndUpdate({ id: guild.id }, { $set: normalized }, { upsert: true, returnDocument: "after" })
+                    .catch(() => {});
+            }
+        }
+
+        const userData = (await client.userData.find().catch(() => [])) || [];
+        for (const x of userData) {
+            const plain = typeof x.toObject === "function" ? x.toObject() : x;
+            const { _id, __v, ...data } = plain;
+            client.data.set(`userData_${x.id}`, normalizeUserData(x.id, data));
+        }
+    } else {
+        for (const [, guild] of client.guilds.cache) {
+            if (!client.data.has(`guildData_${guild.id}`)) {
+                client.data.set(`guildData_${guild.id}`, normalizeGuildData(client, guild, { id: guild.id }));
+            }
         }
     }
 
-    for (const [, guild] of client.guilds.cache) {
-        if (!client.data.has(`guildData_${guild.id}`)) {
-            const normalized = normalizeGuildData(client, guild, { id: guild.id });
-
-            client.data.set(`guildData_${guild.id}`, normalized);
-
-            await client.guildData
-                .findOneAndUpdate({ id: guild.id }, { $set: normalized }, { upsert: true, returnDocument: "after" })
-                .catch(() => {});
-        }
+    if (client._presenceInterval) {
+        clearInterval(client._presenceInterval);
     }
 
-    const userData = await client.userData.find();
-
-    userData.forEach(async (x) => {
-        const { _id, __v, ...data } = x.toObject();
-
-        client.data.set(`userData_${x.id}`, normalizeUserData(x.id, data));
-    });
-
-    initializeServerTagLogger(client).catch((err) => {
-        Logger.debug(`Server Tag Logger initial baseline skipped: ${err.message}`);
-    });
-
-    initializeServerTagAutoRole(client).catch((err) => {
-        Logger.debug(`Server Tag Auto Role initial baseline skipped: ${err.message}`);
-    });
-
-    initializeCustomRolePanels(client).catch((err) => {
-        Logger.debug(`Custom Role Panel initial sync skipped: ${err.message}`);
-    });
-
-    setInterval(async () => {
+    client._presenceInterval = setInterval(async () => {
         try {
             let servers = 0;
             let members = 0;
@@ -93,13 +86,17 @@ module.exports = async (client) => {
             const index = Math.floor(Math.random() * status.length);
             const presenceOptions = { activities: [{ type: status[index].type, name: status[index].name }], status: "online" };
 
-            client.user.setPresence(presenceOptions);
+            client.user?.setPresence?.(presenceOptions);
         } catch (err) {
             Logger.debug(`Presence update skipped: ${err?.message || err}`);
         }
     }, 15000);
 
-    Logger.info(`${botName} Music Bot (${client.user.username}) is ready with ${await client.guilds.cache.size} server`);
+    if (typeof client._presenceInterval.unref === "function") {
+        client._presenceInterval.unref();
+    }
+
+    Logger.info(`${botName} Music Bot (${client.user?.username || "Bot"}) is ready with ${client.guilds.cache.size} server`);
 };
 
 /**

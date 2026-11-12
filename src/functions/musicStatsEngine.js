@@ -1,8 +1,17 @@
+const mongoose = require("mongoose");
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, StringSelectMenuBuilder } = require("discord.js");
 const { convertTime } = require("./timeFormat.js");
 const { getUserFavorites, listSavedPlaylists } = require("./musicPermissions.js");
 const { getPremiumAccess } = require("./premiumSystem.js");
 const { safeReply, safeEditReply, safeDeferUpdate } = require("./interactionResponder.js");
+const { isCloudDatabaseReady } = require("../databases/cloudAdapter.js");
+
+function isStatsDatabaseReady(model) {
+    if (isCloudDatabaseReady()) return true;
+    if (mongoose.connection.readyState === 1) return true;
+    if (model && !model.db) return true; // Custom non-Mongoose adapter/mock
+    return false;
+}
 
 const DAY_NAMES_ID = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 
@@ -155,7 +164,7 @@ function upsertCounterArray(list = [], entry, maxEntries = 35) {
 }
 
 async function ensureUserProfileDoc(client, userId) {
-    if (!userId || !client?.userMusicProfileData) return null;
+    if (!userId || !client?.userMusicProfileData || !isStatsDatabaseReady(client.userMusicProfileData)) return null;
     const uid = String(userId);
     const existing = await client.userMusicProfileData.findOne({ userId: uid }).catch(() => null);
     if (existing) return typeof existing.toObject === "function" ? existing.toObject() : existing;
@@ -184,7 +193,7 @@ async function ensureUserProfileDoc(client, userId) {
 }
 
 async function ensureGuildUserStatsDoc(client, guildId, userId) {
-    if (!guildId || !userId || !client?.musicStatisticsData) return null;
+    if (!guildId || !userId || !client?.musicStatisticsData || !isStatsDatabaseReady(client.musicStatisticsData)) return null;
     const gid = String(guildId);
     const uid = String(userId);
     const existing = await client.musicStatisticsData.findOne({ guildId: gid, userId: uid }).catch(() => null);
@@ -1018,7 +1027,7 @@ function attachMusicProfileCollector(client, message, { viewerId, targetUser, ta
             if (!isOwnerViewer) {
                 const deny = new EmbedBuilder()
                     .setColor(embedColor)
-                    .setDescription("Gunakan `666!cek` atau `/musicprofile` milikmu sendiri untuk menggunakan tombol interaktif profil.");
+                    .setDescription("Gunakan `/musicprofile` milikmu sendiri untuk menggunakan tombol interaktif profil.");
                 await safeReply(btn, { embeds: [deny], flags: MessageFlags.Ephemeral });
                 return;
             }

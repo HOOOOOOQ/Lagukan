@@ -71,14 +71,11 @@ npm start
 - ☑️ Queue pagination with button-based navigation
 - ☑️ 24/7 mode (`/247`) with reconnect persistence per guild
 - ☑️ Autoplay toggle (`/autoplay`) with YouTube-only fallback behavior
-- ☑️ Per-user ban system and maintenance mode (dev prefix commands)
+- ☑️ Per-user ban system and maintenance mode (developer `@BotMention` commands)
 - ☑️ MongoDB-backed guild/user state with periodic sync
 - ☑️ Lyrics lookup for current song (`/lyric`)
 - ☑️ Voice Channel Activity Logger (`Joined` & `Leaving` directly in active Voice Channel Text Chat) with per-guild settings (`/voicelog`)
-- ☑️ Server Tag Logger (`LAGUKAN • SERVER TAG LOGGER`) in Bahasa Indonesia with MongoDB statistics (`/setlogs`, `/ceklogs`, `/resetlogs`, `/tagstats`)
-- ☑️ Server Tag Auto Role (`LAGUKAN SERVER TAG AUTO ROLE`) — automatic per-guild role assignment & removal matched by official Discord Server Tag identity (`identity_guild_id`) with interactive dropdown panel (`/settagrole`, `/cektagrole`, `/resettagrole`, `/synctagrole`)
-- ☑️ Custom Role System (`LAGUKAN CUSTOM ROLE SYSTEM`) — modern interactive dashboard (`/customrole` & `/customrole-config`) exclusive to Server Boosters & Admin-approved Roles, supporting custom role name, Color Picker + HEX + presets, 2/3-color & official Discord Holographic gradients with live visual PNG preview, and phone gallery attachment Role Icons (`ROLE_ICONS`)
-- ☑️ **666 Text Assistant** (`666 help`) — 100% local rule-based Discord text assistant (zero external AI APIs or API keys) integrated directly with Rainlink + Lavalink music playback (`666 play <song>`, `666 pause`, `666 resume`, `666 skip`, `666 stop`, `666 volume 50`, `666 queue`, `666 sekarang putar apa`), varied natural Indonesian conversation (`666 halo`, `666 siapa kamu`, etc.), and 60 local stories across 6 categories (`666 dongengin aku`, `666 cerita horor`, `666 cerita romantis`, `666 cerita lucu`, `666 cerita fantasi`, `666 buat cerita pendek`)
+- ☑️ Multi-bot safe architecture (zero shared text prefixes; slash commands & interactions scoped strictly per bot application)
 - ☑️ Termux Android Standalone Mode (`npm run start:termux`) & Web Installer (`web-installer/`)
 - ☑️ Auto-leave timeout when inactive/alone (configurable)
 
@@ -94,14 +91,16 @@ npm start
 
 | Group | Commands |
 | --- | --- |
-| General | `/help`, `/ping`, `/tagstats` |
-| Music | `/play`, `/queue`, `/skip`, `/previous`, `/pause`, `/resume`, `/stop`, `/seek`, `/remove`, `/clear`, `/shuffle`, `/loop`, `/filter`, `/volume`, `/join`, `/leave`, `/lyric` |
-| Settings | `/247`, `/autoplay`, `/voicelog`, `/setlogs`, `/ceklogs`, `/resetlogs`, `/settagrole`, `/cektagrole`, `/resettagrole`, `/synctagrole`, `/customrole`, `/customrole-config` |
+| General | `/help`, `/ping` |
+| Music | `/play`, `/search`, `/queue`, `/nowplaying`, `/skip`, `/previous`, `/pause`, `/resume`, `/stop`, `/seek`, `/remove`, `/clear`, `/shuffle`, `/loop`, `/filter`, `/volume`, `/join`, `/leave`, `/lyric`, `/lyrics`, `/radio`, `/sleep`, `/musicparty` |
+| Playlist & Profile | `/playlist`, `/favorite`, `/history`, `/musicprofile`, `/musicrank`, `/wrapped`, `/musicleaderboard` |
+| Games & Premium | `/guessthesong`, `/musicbattle`, `/premium` |
+| Settings & DJ | `/247`, `/autoplay`, `/dj`, `/musicconfig`, `/musicrequest-config`, `/voicelog` |
 
-### Prefix Commands (Developer / Ops)
+### Developer Mention Commands (Ops)
 
-- `ban`, `unban`, `maintenance`, `lavalink`, `eval`, `restart`
-- Loaded from `src/commands/message/dev`
+- `@Bot ban`, `@Bot unban`, `@Bot maintenance`, `@Bot lavalink`, `@Bot eval`, `@Bot restart`
+- Loaded from `src/commands/message/dev` (addressed explicitly by mentioning a specific bot so multiple bots never respond simultaneously)
 - Intended for developer/admin use only (requires your Discord user ID in `dev` array in `src/settings/config.js`)
 
 ## `🔧` Environment Variables
@@ -114,7 +113,6 @@ Create a `.env` file from `.env.example`.
 | -------------------- | --------- | ----------------------------------------- |
 | `BOT_NAME`           | `Lagukan` | Discord bot name                          |
 | `TOKEN`              | -         | Discord bot token                         |
-| `PREFIX`             | `!`       | Prefix for dev message commands           |
 | `EMBED_COLOR`        | `5865F2`  | Embed hex color (without `#`)             |
 | `LEAVE_TIMEOUT`      | `60000`   | Inactivity timeout before leaving VC (ms) |
 | `DEFAULT_VOLUME`     | `100`     | Initial player volume                     |
@@ -130,12 +128,6 @@ Create a `.env` file from `.env.example`.
 | ------------------- | -------------- | ---------------------------------------------------------------------------------- |
 | `VOICE_LOG_ENABLED` | `true`         | Enable/disable Voice Activity Logger in active Voice Channel Chat (`true`/`false`) |
 | `TIMEZONE`          | `Asia/Jakarta` | Timezone for voice log timestamps (e.g. WIB)                                       |
-
-### Server Tag Logger
-
-| Key | Default | Purpose |
-| --- | --- | --- |
-| `SERVER_MEMBERS_INTENT` | `true` | Enables `GuildMembers` Gateway intent for real-time `User.primaryGuild` Server Tag detection via `/setlogs` |
 
 ### Lavalink Connection
 

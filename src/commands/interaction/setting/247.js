@@ -37,12 +37,14 @@ module.exports = {
                 status: true,
                 text: player.textId || interaction.channelId,
                 voice: player.voiceId || interaction.member.voice.channelId,
+                botId: client.user?.id || null,
             };
         } else {
             guildData.reconnect = {
                 status: false,
                 text: null,
                 voice: null,
+                botId: null,
             };
         }
 

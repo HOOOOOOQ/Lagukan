@@ -1,6 +1,11 @@
 const Logger = require("../utils/logger");
 
+let anticrashAttached = false;
+
 module.exports = async () => {
+    if (anticrashAttached) return;
+    anticrashAttached = true;
+
     process.on("unhandledRejection", async (reason, promise) => {
         Logger.anticrash("UnhandledRejection_Logs", "[start] : ===============");
         Logger.error("Unhandled Rejection at:", promise, "reason:", reason);

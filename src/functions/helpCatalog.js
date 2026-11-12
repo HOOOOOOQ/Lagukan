@@ -16,7 +16,7 @@ const HELP_CATEGORIES = {
         label: "Home",
         title: "🏠 Ringkasan Bantuan & Panduan Cepat",
         emoji: "🏠",
-        description: "Ringkasan platform musik, kategori fitur, profil 666!cek, dan panduan mulai cepat.",
+        description: "Ringkasan platform musik, kategori fitur, dan panduan mulai cepat.",
     },
     music: {
         id: "music",
@@ -37,16 +37,14 @@ const HELP_CATEGORIES = {
         label: "Personal Profile",
         title: "👤 Kategori: PERSONAL PROFILE, WRAPPED & LEADERBOARD",
         emoji: "👤",
-        description:
-            "Kartu profil musik (`666!cek`, `666!cek @user`, `/musicprofile`), Listener Level & XP (`/musicrank`), `/wrapped`, & `/musicleaderboard`.",
+        description: "Kartu profil musik (`/musicprofile`), Listener Level & XP (`/musicrank`), `/wrapped`, & `/musicleaderboard`.",
     },
     settings: {
         id: "settings",
         label: "Server Settings",
         title: "⚙️ Kategori: SERVER SETTINGS & REQUEST PANEL",
         emoji: "⚙️",
-        description:
-            "Voice Channel Music Request (`/musicrequest-config`), Smart Autoplay, Filter Audio, 24/7, Music Config, & Custom Role.",
+        description: "Voice Channel Music Request (`/musicrequest-config`), Smart Autoplay, Filter Audio, 24/7, & Music Config.",
     },
     dj: {
         id: "dj",
@@ -69,32 +67,13 @@ const HELP_CATEGORIES = {
         emoji: "💎",
         description: "Status akses Premium terverifikasi, kuota ekstra playlist/favorit/wrapped, & kustomisasi tema dashboard server.",
     },
-    customrole: {
-        id: "customrole",
-        label: "Custom Role",
-        title: "🎨 Kategori: CUSTOM ROLE",
-        emoji: "🎨",
-        description: "Pembuatan role kustom member (warna/gradasi/ikon) dan konfigurasi panel Custom Role admin.",
-    },
     admin: {
         id: "admin",
         label: "Admin",
         title: "🛡️ Kategori: ADMIN, LOGS & UTILITAS",
         emoji: "🛡️",
-        description: "Konfigurasi Server Tag Logger, Server Tag Auto Role, Voice Activity Logger, statistik, & utilitas sistem.",
+        description: "Konfigurasi Voice Activity Logger (`/voicelog`), pengecekan latensi (`/ping`), & bantuan sistem (`/help`).",
     },
-};
-
-const PREFIX_PROFILE_DOC = {
-    name: "666!cek",
-    isPrefix: true,
-    categoryKey: "profile",
-    func: "Menampilkan Kartu Profil Musik Lagukan lengkap milikmu sendiri (`666!cek`) atau member lain (`666!cek @user`) beserta 5 tombol interaktif.",
-    usage: "666!cek [@user | user_id]",
-    params: "Opsional: `@user` atau `user_id` (kosongkan untuk melihat profil musik milik sendiri)",
-    example: "666!cek • 666!cek @Teman",
-    permission: "Semua anggota server di text channel",
-    limits: "Statistik dihitung murni dari pemutaran nyata; melihat profil user lain bersifat read-only.",
 };
 
 const COMMAND_DOCS = [
@@ -357,14 +336,14 @@ const COMMAND_DOCS = [
     },
 
     // =========================================================================
-    // PERSONAL PROFILE, WRAPPED & LEADERBOARD (4 Slash Commands + 666!cek)
+    // PERSONAL PROFILE, WRAPPED & LEADERBOARD (4 Slash Commands)
     // =========================================================================
     {
         name: "musicprofile",
         categoryKey: "profile",
         func: "Menampilkan Kartu Profil Musik Lagukan lengkap (Level, XP, Waktu Dengar, Top Lagu/Artis, & 5 tombol interaktif).",
         usage: "/musicprofile [user:@User]",
-        params: "Opsional: `user` (anggota yang ingin dilihat profil musiknya; bisa juga via `666!cek @user`)",
+        params: "Opsional: `user` (anggota yang ingin dilihat profil musiknya)",
         example: "/musicprofile • /musicprofile user:@Teman",
         permission: "Semua anggota server",
         limits: "Data dihitung murni dari pemutaran lagu nyata; profil member lain bersifat read-only.",
@@ -503,31 +482,7 @@ const COMMAND_DOCS = [
     },
 
     // =========================================================================
-    // CUSTOM ROLE (2 Commands — also accessible under Settings/Custom Role)
-    // =========================================================================
-    {
-        name: "customrole",
-        categoryKey: "customrole",
-        func: "Membuka dashboard interaktif anggota untuk membuat, mengubah nama, warna/gradasi, ikon, atau menghapus Custom Role.",
-        usage: "/customrole",
-        params: "Tidak ada parameter (interaksi penuh melalui tombol & modal pada panel)",
-        example: "/customrole",
-        permission: "Sesuai kebijakan server (Server Booster / Role Khusus / Semua Member yang diizinkan Admin)",
-        limits: "Bot harus memiliki permission `Manage Roles` dengan posisi role bot di atas posisi Custom Role.",
-    },
-    {
-        name: "customrole-config",
-        categoryKey: "customrole",
-        func: "Konfigurasi admin untuk panel otomatis Custom Role, syarat akses (Booster/Role tertentu), posisi anchor, & batas.",
-        usage: "/customrole-config",
-        params: "Tidak ada parameter (dashboard konfigurasi interaktif)",
-        example: "/customrole-config",
-        permission: "`Manage Server` atau `Administrator`",
-        limits: "Membutuhkan permission `Manage Roles` pada bot agar pembuatan role berjalan normal.",
-    },
-
-    // =========================================================================
-    // ADMIN, LOGS & UTILITIES (11 Commands)
+    // ADMIN, LOGS & UTILITIES (3 Commands)
     // =========================================================================
     {
         name: "voicelog",
@@ -538,86 +493,6 @@ const COMMAND_DOCS = [
         example: "/voicelog status:enable timezone:Asia/Jakarta",
         permission: "`Manage Server` (`ManageGuild`)",
         limits: "Format timezone harus mengikuti standar IANA (contoh: `Asia/Jakarta`, `Asia/Makassar`, `Asia/Jayapura`).",
-    },
-    {
-        name: "setlogs",
-        categoryKey: "admin",
-        func: "Menetapkan channel teks tujuan untuk mencatat aktivitas perubahan Server Tag anggota.",
-        usage: "/setlogs channel:<#channel>",
-        params: "Wajib: `channel` (Text Channel server)",
-        example: "/setlogs channel:#server-tag-logs",
-        permission: "`Manage Server` atau `Administrator`",
-        limits: "Bot harus memiliki izin `View Channel`, `Send Messages`, dan `Embed Links` di channel tujuan.",
-    },
-    {
-        name: "ceklogs",
-        categoryKey: "admin",
-        func: "Memeriksa status konfigurasi channel Server Tag Logger dan kesiapan intent di server ini.",
-        usage: "/ceklogs",
-        params: "Tidak ada parameter",
-        example: "/ceklogs",
-        permission: "`Manage Server` atau `Administrator` (atau pemeriksa konfigurasi)",
-        limits: "Deteksi real-time optimal jika `SERVER MEMBERS INTENT` diaktifkan di Developer Portal.",
-    },
-    {
-        name: "resetlogs",
-        categoryKey: "admin",
-        func: "Menonaktifkan dan menghapus konfigurasi channel log Server Tag pada server ini.",
-        usage: "/resetlogs",
-        params: "Tidak ada parameter",
-        example: "/resetlogs",
-        permission: "`Manage Server` atau `Administrator`",
-        limits: "Hanya menghapus pengaturan channel log tanpa menghapus data statistik yang sudah tercatat.",
-    },
-    {
-        name: "settagrole",
-        categoryKey: "admin",
-        func: "Memilih dan mengaktifkan pemberian role otomatis bagi member yang memasang Server Tag server ini.",
-        usage: "/settagrole",
-        params: "Tidak ada parameter (memilih role melalui menu interaktif)",
-        example: "/settagrole",
-        permission: "`Manage Server` atau `Administrator`",
-        limits: "Role yang dipilih harus berada di bawah hirarki role tertinggi milik bot dan bukan role managed/bot.",
-    },
-    {
-        name: "cektagrole",
-        categoryKey: "admin",
-        func: "Melihat status konfigurasi Server Tag Auto Role serta kesehatan izin role pada server ini.",
-        usage: "/cektagrole",
-        params: "Tidak ada parameter",
-        example: "/cektagrole",
-        permission: "Semua anggota / Admin server",
-        limits: "Menampilkan peringatan otomatis jika hirarki role bot berubah di bawah role target.",
-    },
-    {
-        name: "resettagrole",
-        categoryKey: "admin",
-        func: "Menghapus konfigurasi Server Tag Auto Role sehingga bot berhenti memberi/mencabut role otomatis.",
-        usage: "/resettagrole",
-        params: "Tidak ada parameter",
-        example: "/resettagrole",
-        permission: "`Manage Server` atau `Administrator`",
-        limits: "Hanya dapat dijalankan oleh administrator/pengelola server.",
-    },
-    {
-        name: "synctagrole",
-        categoryKey: "admin",
-        func: "Memindai seluruh anggota server dan menyinkronkan pemberian/pencabutan role sesuai pemakaian Server Tag.",
-        usage: "/synctagrole",
-        params: "Tidak ada parameter",
-        example: "/synctagrole",
-        permission: "`Manage Server` atau `Administrator`",
-        limits: "Membutuhkan konfigurasi `/settagrole` yang sudah aktif terlebih dahulu.",
-    },
-    {
-        name: "tagstats",
-        categoryKey: "admin",
-        func: "Melihat statistik jumlah pengguna Server Tag di server ini atau riwayat tag spesifik seorang member.",
-        usage: "/tagstats [member:@User]",
-        params: "Opsional: `member` (mention/pilih anggota tertentu)",
-        example: "/tagstats • /tagstats member:@User",
-        permission: "Semua anggota server",
-        limits: "Menampilkan data yang telah teramati dan tersimpan di database server.",
     },
     {
         name: "ping",
@@ -700,20 +575,14 @@ function getVerifiedCommandDocs(client) {
 }
 
 function getDocsForSection(allDocs, sectionKey) {
-    if (sectionKey === "profile") {
-        return [PREFIX_PROFILE_DOC, ...allDocs.filter((d) => d.categoryKey === "profile")];
-    }
-    if (sectionKey === "settings") {
-        return allDocs.filter((d) => d.categoryKey === "settings" || d.categoryKey === "customrole");
-    }
-    if (sectionKey === "music_settings_only") {
+    if (sectionKey === "settings" || sectionKey === "music_settings_only") {
         return allDocs.filter((d) => d.categoryKey === "settings");
     }
     return allDocs.filter((d) => d.categoryKey === sectionKey);
 }
 
 function formatCommandField(doc) {
-    const label = doc.isPrefix ? `\`${doc.name}\` *(Prefix)*` : `\`/${doc.name}\``;
+    const label = `\`/${doc.name}\``;
     return {
         name: label,
         value: [
@@ -732,7 +601,6 @@ function formatCommandField(doc) {
 
 module.exports = {
     HELP_CATEGORIES,
-    PREFIX_PROFILE_DOC,
     COMMAND_DOCS,
     getVerifiedCommandDocs,
     getDocsForSection,

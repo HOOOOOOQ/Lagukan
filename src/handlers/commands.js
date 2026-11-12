@@ -9,6 +9,9 @@ const {
 } = require("../functions/slashCommandValidator");
 
 module.exports = (client) => {
+    if (client._commandsLoaded) return;
+    client._commandsLoaded = true;
+
     try {
         const data = [];
         const commandMeta = new Map();

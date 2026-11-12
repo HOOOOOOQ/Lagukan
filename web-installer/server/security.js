@@ -17,11 +17,6 @@ const ALLOWED_MODELS = new Set([
     "GuessTheSong",
     "MusicBattle",
     "PremiumConfig",
-    "customRole",
-    "customRoleConfig",
-    "serverTagConfig",
-    "serverTagMember",
-    "serverTagAutoRole",
 ]);
 
 const ALLOWED_DB_OPERATIONS = new Set([

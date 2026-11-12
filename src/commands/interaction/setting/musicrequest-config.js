@@ -143,6 +143,7 @@ module.exports = {
             await saveGuildRequestConfig(client, interaction.guildId, {
                 ...draftCfg,
                 messageId: sentPanel.id,
+                botId: client.user?.id || null,
             });
 
             return safeEditReply(interaction, {
@@ -199,7 +200,11 @@ module.exports = {
                 if (ch?.send) {
                     const resent = await ch.send(buildRequestPanelPayload(client, interaction.guild, existing)).catch(() => null);
                     if (resent) {
-                        await saveGuildRequestConfig(client, interaction.guildId, { enabled: true, messageId: resent.id });
+                        await saveGuildRequestConfig(client, interaction.guildId, {
+                            enabled: true,
+                            messageId: resent.id,
+                            botId: client.user?.id || null,
+                        });
                         return safeEditReply(interaction, {
                             embeds: [
                                 new EmbedBuilder()

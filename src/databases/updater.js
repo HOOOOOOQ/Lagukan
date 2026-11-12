@@ -1,7 +1,11 @@
 const cron = require("node-cron");
+const mongoose = require("mongoose");
+const { isCloudDatabaseReady } = require("./cloudAdapter");
 const Logger = require("../utils/logger");
 
 module.exports = async (client) => {
+    if (client._updaterTask) return;
+
     const updateSettings = async (items, settingMap, dataModel, type) => {
         for (const item of items) {
             const setting = settingMap.get(`${type}_${item.id}`);
@@ -11,8 +15,12 @@ module.exports = async (client) => {
         }
     };
 
-    cron.schedule("*/600 * * * * *", async () => {
+    const task = cron.schedule("*/600 * * * * *", async () => {
         try {
+            if (mongoose.connection.readyState !== 1 && !isCloudDatabaseReady()) {
+                return;
+            }
+
             const guilds = await client.guildData.find();
             await updateSettings(guilds, client.data, client.guildData, "guildData");
 
@@ -22,6 +30,8 @@ module.exports = async (client) => {
             Logger.error("An error occurred while updating the database:", error);
         }
     });
+
+    client._updaterTask = task;
 };
 
 /**
