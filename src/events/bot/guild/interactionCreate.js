@@ -1,76 +1,48 @@
 const { EmbedBuilder, InteractionType, MessageFlags } = require("discord.js");
 const { permissions } = require("../../../functions/getPermission.js");
 const { createDataGuild, createDataUser } = require("../../../functions/createData.js");
-const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
-const { handleTagRoleComponentInteraction, handleCrossGuildUserTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
-const { handleCustomRoleInteraction } = require("../../../functions/customRoleSystem.js");
 const { handleRequestPanelInteraction } = require("../../../functions/voiceRequestSystem.js");
 const { handleMusicBattleInteraction } = require("../../../functions/musicGamesSystem.js");
 const { buildSupportComponents, safeReply, isUnknownInteractionError } = require("../../../functions/interactionResponder.js");
 const Logger = require("../../../utils/logger");
 
+const MAX_PROCESSED_INTERACTION_IDS = 2000;
+
+function markInteractionProcessed(client, interactionId) {
+    if (!interactionId) return false;
+    if (!(client._processedInteractionIds instanceof Set)) {
+        client._processedInteractionIds = new Set();
+    }
+    const key = String(interactionId);
+    if (client._processedInteractionIds.has(key)) {
+        return true;
+    }
+    if (client._processedInteractionIds.size >= MAX_PROCESSED_INTERACTION_IDS) {
+        const oldest = client._processedInteractionIds.values().next().value;
+        if (oldest) client._processedInteractionIds.delete(oldest);
+    }
+    client._processedInteractionIds.add(key);
+    return false;
+}
+
 module.exports = async (client, interaction) => {
     if (!interaction?.guild || interaction.user?.bot) return;
 
-    // Handle interactive dropdown & buttons for `/settagrole`
-    if (typeof interaction.customId === "string" && interaction.customId.startsWith("tagrole:")) {
-        try {
-            await handleTagRoleComponentInteraction(client, interaction);
-        } catch (err) {
-            if (!isUnknownInteractionError(err)) {
-                Logger.error("[ServerTagAutoRole] Error pada komponen interaksi /settagrole:", err);
-            }
-        }
+    // Ensure this bot only processes interactions explicitly targeted to its own Discord Application ID
+    if (interaction.applicationId && client.user?.id && String(interaction.applicationId) !== String(client.user.id)) {
         return;
     }
 
-    // Handle permanent Custom Role Panel buttons, interactive studios, `/customrole-config`, and Modals
-    if (typeof interaction.customId === "string" && interaction.customId.startsWith("customrole:")) {
-        createDataGuild(client, interaction.guild).catch(() => {});
-        createDataUser(client, interaction.user).catch(() => {});
-
-        const bannedUser = client.data.get(`userData_${interaction.user.id}`);
-        if (bannedUser?.ban?.status) {
-            const banEmbed = new EmbedBuilder()
-                .setColor(client.config.embedColor)
-                .setDescription(
-                    `You have been banned from using the bot.\n\`\`\`${bannedUser.ban.reason}\`\`\`\nPlease contact the developer if you think this is a mistake.`,
-                );
-            await safeReply(interaction, {
-                embeds: [banEmbed],
-                components: buildSupportComponents(client, "Support Server"),
-                flags: MessageFlags.Ephemeral,
-            });
-            return;
-        }
-
-        if (client.data.get("maintenance") && !client.config.dev.includes(interaction.user.id)) {
-            const botName = client.config.botName || "Lagukan";
-            const maintEmbed = new EmbedBuilder()
-                .setColor(client.config.embedColor)
-                .setDescription(
-                    `${botName} is currently under maintenance. Please try again later.\nJoin our support server for more information.`,
-                );
-            await safeReply(interaction, {
-                embeds: [maintEmbed],
-                components: buildSupportComponents(client, "Support Server"),
-                flags: MessageFlags.Ephemeral,
-            });
-            return;
-        }
-
-        try {
-            await handleCustomRoleInteraction(client, interaction);
-        } catch (err) {
-            if (!isUnknownInteractionError(err)) {
-                Logger.error("[CustomRole] Error pada interaksi Custom Role:", err);
-            }
-        }
+    // Deduplicate by interaction ID so each slash/component interaction is processed at most once
+    if (markInteractionProcessed(client, interaction.id)) {
         return;
     }
 
     // Handle Voice Channel Music Request Panel buttons & modals (`mreq:*`)
     if (typeof interaction.customId === "string" && interaction.customId.startsWith("mreq:")) {
+        if (interaction.message?.author?.id && client.user?.id && String(interaction.message.author.id) !== String(client.user.id)) {
+            return;
+        }
         createDataGuild(client, interaction.guild).catch(() => {});
         createDataUser(client, interaction.user).catch(() => {});
         try {
@@ -85,6 +57,9 @@ module.exports = async (client, interaction) => {
 
     // Handle Music Battle submission & voting buttons/modals (`mbat:*`)
     if (typeof interaction.customId === "string" && interaction.customId.startsWith("mbat:")) {
+        if (interaction.message?.author?.id && client.user?.id && String(interaction.message.author.id) !== String(client.user.id)) {
+            return;
+        }
         createDataGuild(client, interaction.guild).catch(() => {});
         createDataUser(client, interaction.user).catch(() => {});
         try {
@@ -107,16 +82,11 @@ module.exports = async (client, interaction) => {
     // Non-blocking background sync so MongoDB latency NEVER delays Discord's 3-second acknowledgement deadline
     createDataGuild(client, interaction.guild).catch(() => {});
     createDataUser(client, interaction.user).catch(() => {});
-    handlePassiveMemberObservation(client, interaction.guild, interaction.user, interaction.member).catch(() => {});
-    handleCrossGuildUserTagAutoRole(client, interaction.user, {
-        originGuildId: interaction.guild.id,
-        member: interaction.member?.roles?.add ? interaction.member : undefined,
-    }).catch(() => {});
 
     const command = client.slash.get(interaction.commandName);
     if (!command) return;
 
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.user?.username || client.config.botName || "Lagukan";
     const userData = client.data.get(`userData_${interaction.user.id}`);
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
     const supportComponents = buildSupportComponents(client, "Support Server");

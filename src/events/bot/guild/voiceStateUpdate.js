@@ -1,7 +1,5 @@
 const { PermissionsBitField, EmbedBuilder } = require("discord.js");
 const { handleVoiceStateLog } = require("../../../functions/voiceLogger.js");
-const { handlePassiveMemberObservation } = require("../../../functions/serverTagLogger.js");
-const { handleCrossGuildUserTagAutoRole } = require("../../../functions/serverTagAutoRole.js");
 const {
     PLAYER_STATE_DESTROYED,
     getGuildPlayer,
@@ -17,14 +15,6 @@ const Logger = require("../../../utils/logger");
 
 module.exports = async (client, oldState, newState) => {
     handleVoiceStateLog(client, oldState, newState).catch(() => {});
-    const activeVoiceMember = newState?.member || oldState?.member;
-    if (activeVoiceMember?.guild && activeVoiceMember?.user && !activeVoiceMember.user.bot) {
-        handlePassiveMemberObservation(client, activeVoiceMember.guild, activeVoiceMember.user, activeVoiceMember).catch(() => {});
-        handleCrossGuildUserTagAutoRole(client, activeVoiceMember.user, {
-            originGuildId: activeVoiceMember.guild.id,
-            member: activeVoiceMember,
-        }).catch(() => {});
-    }
 
     const guildId = String(newState?.guildId || oldState?.guildId || "");
     if (!guildId) return;

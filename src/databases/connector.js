@@ -10,8 +10,19 @@ module.exports = async (client) => {
             return;
         }
 
+        if (mongoose.connection.readyState === 1 || mongoose.connection.readyState === 2) {
+            Logger.info("Database connection reused");
+            return;
+        }
+
+        const mongoUri = String(client.config?.mongoUri || "").trim();
+        if (!mongoUri) {
+            Logger.warn("MONGO_URI belum dikonfigurasi; bot berjalan menggunakan penyimpanan sesi memori sementara.");
+            return;
+        }
+
         mongoose.set("strictQuery", false);
-        await mongoose.connect(client.config.mongoUri);
+        await mongoose.connect(mongoUri);
 
         Logger.info("Database events loaded");
     } catch (error) {

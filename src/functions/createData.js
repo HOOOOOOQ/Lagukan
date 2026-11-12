@@ -1,3 +1,5 @@
+const mongoose = require("mongoose");
+const { isCloudDatabaseReady } = require("../databases/cloudAdapter.js");
 const Logger = require("../utils/logger");
 
 function clampNumber(value, min, max, fallback) {
@@ -28,6 +30,7 @@ function normalizeGuildData(client, guild, rawData = {}) {
             status: manualDisconnect ? false : Boolean(rawData.reconnect?.status),
             text: manualDisconnect ? null : rawData.reconnect?.text || null,
             voice: manualDisconnect ? null : rawData.reconnect?.voice || null,
+            botId: manualDisconnect ? null : rawData.reconnect?.botId || null,
         },
         voiceLog: {
             enabled: voiceSource === "command" ? Boolean(rawData.voiceLog?.enabled) : Boolean(envVoice.enabled),
@@ -71,6 +74,11 @@ module.exports = {
             if (existingCached) return existingCached;
 
             const defaults = normalizeGuildData(client, guild, { id: guild.id });
+            if (mongoose.connection.readyState !== 1 && !isCloudDatabaseReady()) {
+                client.data.set(`guildData_${guild.id}`, defaults);
+                return defaults;
+            }
+
             const guildDoc = await client.guildData.findOneAndUpdate(
                 { id: guild.id },
                 {
@@ -110,6 +118,11 @@ module.exports = {
             if (existing) return existing;
 
             const defaults = normalizeUserData(user.id, { id: user.id });
+            if (mongoose.connection.readyState !== 1 && !isCloudDatabaseReady()) {
+                client.data.set(`userData_${user.id}`, defaults);
+                return defaults;
+            }
+
             const userData = await client.userData.findOneAndUpdate(
                 { id: user.id },
                 {

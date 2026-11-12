@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const {
     isGuildManuallyDisconnected,
     isGuildLeavingInProgress,
@@ -10,6 +11,7 @@ const {
 const { recordNodeEvent, fetchNodeCapabilities, waitForNodeSessionReady } = require("../../../functions/nodeHealthManager.js");
 const { getGuildMusicSettings } = require("../../../functions/musicPermissions.js");
 const { tryAutoResumeGuildPlayback } = require("../../../functions/radioAndSleepManager.js");
+const { isCloudDatabaseReady } = require("../../../databases/cloudAdapter.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, node) => {
@@ -29,7 +31,8 @@ module.exports = async (client, node) => {
             })
             .catch(() => {});
 
-        const guildDatas = (await client.guildData?.find?.().catch(() => [])) || [];
+        const dbReady = mongoose.connection.readyState === 1 || isCloudDatabaseReady();
+        const guildDatas = dbReady ? (await client.guildData?.find?.().catch(() => [])) || [] : [];
 
         const reconnects = guildDatas.filter((doc) => {
             const gId = String(doc?.id || "");
@@ -39,6 +42,10 @@ module.exports = async (client, node) => {
             syncGuildDisconnectMemory(gId, liveData);
 
             if (isGuildManuallyDisconnected(client, gId) || isGuildLeavingInProgress(gId)) {
+                return false;
+            }
+
+            if (liveData?.reconnect?.botId && client.user?.id && String(liveData.reconnect.botId) !== String(client.user.id)) {
                 return false;
             }
 

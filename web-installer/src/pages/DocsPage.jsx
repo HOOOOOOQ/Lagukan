@@ -99,9 +99,9 @@ export default function DocsPage({ health, onCopyText, copiedKey, onNavigate }) 
                         → klik <strong>New Application</strong> → buka tab <strong>Bot</strong>.
                     </li>
                     <li>
-                        Gulir ke bagian <strong>Privileged Gateway Intents</strong> lalu aktifkan wajib:{" "}
-                        <strong>MESSAGE CONTENT INTENT</strong> (agar <code>666!cek</code>, request lagu langsung di channel, & tebakan lagu
-                        berfungsi) serta <strong>SERVER MEMBERS INTENT</strong>. Klik <strong>Save Changes</strong>.
+                        Gulir ke bagian <strong>Privileged Gateway Intents</strong> lalu aktifkan <strong>MESSAGE CONTENT INTENT</strong>{" "}
+                        (agar request lagu langsung di channel & tebakan lagu <code>/guessthesong</code> berfungsi). Klik{" "}
+                        <strong>Save Changes</strong>.
                     </li>
                     <li>
                         Klik <strong>Reset Token</strong> → salin token bot Anda. Saat installer Termux meminta token, cukup{" "}
@@ -175,7 +175,7 @@ export default function DocsPage({ health, onCopyText, copiedKey, onNavigate }) 
                         </p>
                     </div>
                     <div>
-                        <strong style={{ color: "#fff" }}>• Command 666!cek tidak merespons:</strong>
+                        <strong style={{ color: "#fff" }}>• Input teks di channel Request Musik tidak merespons:</strong>
                         <p>
                             Aktifkan <strong>MESSAGE CONTENT INTENT</strong> di Discord Developer Portal → Bot, lalu restart Lagukan di
                             Termux.

@@ -18,11 +18,6 @@ const CLIENT_MODEL_BINDINGS = Object.freeze([
     { prop: "guessTheSongData", modelName: "GuessTheSong" },
     { prop: "musicBattleData", modelName: "MusicBattle" },
     { prop: "premiumConfigData", modelName: "PremiumConfig" },
-    { prop: "customRoleData", modelName: "customRole" },
-    { prop: "customRoleConfigData", modelName: "customRoleConfig" },
-    { prop: "serverTagConfigData", modelName: "serverTagConfig" },
-    { prop: "serverTagMemberData", modelName: "serverTagMember" },
-    { prop: "serverTagAutoRoleData", modelName: "serverTagAutoRole" },
 ]);
 
 let cloudReadyState = false;

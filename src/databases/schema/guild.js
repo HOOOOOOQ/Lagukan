@@ -25,6 +25,7 @@ const createGuild = new mongoose.Schema({
         status: { type: Boolean, default: false },
         text: { type: String, default: null },
         voice: { type: String, default: null },
+        botId: { type: String, default: null },
     },
     voiceLog: {
         enabled: { type: Boolean, default: true },

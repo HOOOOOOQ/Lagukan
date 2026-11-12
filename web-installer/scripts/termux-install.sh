@@ -307,12 +307,10 @@ if [ "$PRESERVE_EXISTING_ENV" = "0" ] || [ ! -f ".env" ]; then
 # =========================================================
 BOT_NAME=Lagukan
 TOKEN=${DISCORD_BOT_TOKEN}
-PREFIX=666!
 EMBED_COLOR=8B5CF6
 STANDALONE_MODE=true
 TIMEZONE=Asia/Jakarta
 VOICE_LOG_ENABLED=true
-SERVER_MEMBERS_INTENT=true
 
 # CENTRAL CLOUD DATABASE GATEWAY (NO DIRECT MONGO_URI NEEDED)
 LAGUKAN_CLOUD_MODE=true

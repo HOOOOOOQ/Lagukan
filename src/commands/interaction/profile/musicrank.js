@@ -75,7 +75,7 @@ module.exports = {
                     inline: true,
                 },
             )
-            .setFooter({ text: `Gunakan 666!cek atau /musicprofile untuk melihat kartu profil lengkap` })
+            .setFooter({ text: `Gunakan /musicprofile untuk melihat kartu profil musik lengkap` })
             .setTimestamp();
 
         return safeEditReply(interaction, { embeds: [embed] });

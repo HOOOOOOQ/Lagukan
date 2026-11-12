@@ -28,8 +28,8 @@ const BOT_FEATURES = [
     },
     {
         icon: Award,
-        title: "Profil 666!cek & Listener Level",
-        desc: "Kartu profil musik personal dengan 8 jenjang level XP anti-farming, riwayat dengar nyata, Playlist, & Music Wrapped.",
+        title: "Profil Musik & Listener Level",
+        desc: "Kartu profil musik personal (/musicprofile) dengan 8 jenjang level XP anti-farming, riwayat dengar nyata, Playlist, & Music Wrapped.",
     },
     {
         icon: Radio,
