@@ -6,83 +6,99 @@ const PLAYER_STATE_CONNECTED = RainlinkPlayerState?.CONNECTED ?? 0;
 const PLAYER_STATE_DISCONNECTED = RainlinkPlayerState?.DISCONNECTED ?? 1;
 const PLAYER_STATE_DESTROYED = RainlinkPlayerState?.DESTROYED ?? 2;
 
-// Per-guild isolated tracking sets & timer maps
+// Scoped by `${botApplicationId}:${guildId}` so 10 concurrent bots never collide
 const manualDisconnectGuilds = new Set();
 const leavingInProgressGuilds = new Set();
 const pendingNodeReconnectTimers = new Map();
 const pendingInactivityTimers = new Map();
 
-function syncGuildDisconnectMemory(guildId, guildData) {
+function buildBotGuildKey(clientOrBotId, guildId) {
+    const gId = String(guildId || "");
+    if (!gId) return "";
+    const botId =
+        typeof clientOrBotId === "string" ? clientOrBotId : String(clientOrBotId?.user?.id || clientOrBotId?.application?.id || "default");
+    return `${botId}:${gId}`;
+}
+
+function syncGuildDisconnectMemory(guildId, guildData, client = null) {
     if (!guildId) return;
-    const gId = String(guildId);
+    const key = buildBotGuildKey(client, guildId);
     if (guildData?.manualDisconnect) {
-        manualDisconnectGuilds.add(gId);
+        manualDisconnectGuilds.add(key);
     } else {
-        manualDisconnectGuilds.delete(gId);
+        manualDisconnectGuilds.delete(key);
     }
 }
 
 function isGuildManuallyDisconnected(client, guildId) {
     if (!guildId) return false;
     const gId = String(guildId);
-    if (manualDisconnectGuilds.has(gId)) return true;
+    const key = buildBotGuildKey(client, gId);
+    if (manualDisconnectGuilds.has(key)) return true;
 
     const cached = client?.data?.get?.(`guildData_${gId}`);
-    return Boolean(cached?.manualDisconnect);
+    return Boolean(cached?.manualDisconnect && (!cached?.manualDisconnectBotId || cached.manualDisconnectBotId === client?.user?.id));
 }
 
-function isGuildLeavingInProgress(guildId) {
+function isGuildLeavingInProgress(guildId, client = null) {
     if (!guildId) return false;
-    return leavingInProgressGuilds.has(String(guildId));
+    if (client) {
+        return leavingInProgressGuilds.has(buildBotGuildKey(client, guildId));
+    }
+    const suffix = `:${String(guildId)}`;
+    for (const k of leavingInProgressGuilds) {
+        if (k.endsWith(suffix)) return true;
+    }
+    return false;
 }
 
-function cancelNodeReconnectTimer(guildId) {
+function cancelNodeReconnectTimer(guildId, client = null) {
     if (!guildId) return;
-    const gId = String(guildId);
-    const existing = pendingNodeReconnectTimers.get(gId);
+    const key = buildBotGuildKey(client, guildId);
+    const existing = pendingNodeReconnectTimers.get(key);
     if (existing) {
         clearTimeout(existing);
-        pendingNodeReconnectTimers.delete(gId);
+        pendingNodeReconnectTimers.delete(key);
     }
 }
 
-function registerNodeReconnectTimer(guildId, timerHandle) {
+function registerNodeReconnectTimer(guildId, timerHandle, client = null) {
     if (!guildId || !timerHandle) return;
-    const gId = String(guildId);
-    cancelNodeReconnectTimer(gId);
-    pendingNodeReconnectTimers.set(gId, timerHandle);
+    const key = buildBotGuildKey(client, guildId);
+    cancelNodeReconnectTimer(guildId, client);
+    pendingNodeReconnectTimers.set(key, timerHandle);
 }
 
-function clearNodeReconnectTimerRef(guildId, timerHandle) {
+function clearNodeReconnectTimerRef(guildId, timerHandle, client = null) {
     if (!guildId) return;
-    const gId = String(guildId);
-    if (pendingNodeReconnectTimers.get(gId) === timerHandle) {
-        pendingNodeReconnectTimers.delete(gId);
+    const key = buildBotGuildKey(client, guildId);
+    if (pendingNodeReconnectTimers.get(key) === timerHandle) {
+        pendingNodeReconnectTimers.delete(key);
     }
 }
 
-function cancelInactivityTimer(guildId) {
+function cancelInactivityTimer(guildId, client = null) {
     if (!guildId) return;
-    const gId = String(guildId);
-    const existing = pendingInactivityTimers.get(gId);
+    const key = buildBotGuildKey(client, guildId);
+    const existing = pendingInactivityTimers.get(key);
     if (existing) {
         clearTimeout(existing);
-        pendingInactivityTimers.delete(gId);
+        pendingInactivityTimers.delete(key);
     }
 }
 
-function registerInactivityTimer(guildId, timerHandle) {
+function registerInactivityTimer(guildId, timerHandle, client = null) {
     if (!guildId || !timerHandle) return;
-    const gId = String(guildId);
-    cancelInactivityTimer(gId);
-    pendingInactivityTimers.set(gId, timerHandle);
+    const key = buildBotGuildKey(client, guildId);
+    cancelInactivityTimer(guildId, client);
+    pendingInactivityTimers.set(key, timerHandle);
 }
 
-function clearInactivityTimerRef(guildId, timerHandle) {
+function clearInactivityTimerRef(guildId, timerHandle, client = null) {
     if (!guildId) return;
-    const gId = String(guildId);
-    if (pendingInactivityTimers.get(gId) === timerHandle) {
-        pendingInactivityTimers.delete(gId);
+    const key = buildBotGuildKey(client, guildId);
+    if (pendingInactivityTimers.get(key) === timerHandle) {
+        pendingInactivityTimers.delete(key);
     }
 }
 
@@ -147,7 +163,6 @@ async function prepareGuildForReconnect(client, guildId) {
         !existing.sudoDestroy &&
         Boolean(existing.voiceId)
     ) {
-        // Active connected player already present; caller should not recreate
         return false;
     }
 
@@ -219,17 +234,18 @@ async function cleanupStalePlayerIfDisconnected(client, guild) {
 }
 
 /**
- * Clears the manual-disconnect lock for a specific guild when a user runs `/play` or `/join`
- * (or re-enables `/247`), without affecting any other server.
+ * Clears the manual-disconnect lock for a specific `(bot, guild)` when a user runs `/play`, `/join`,
+ * `/247-setup`, or `/247-enable`, without affecting any other bot or server.
  */
 async function clearManualDisconnect(client, guildId, guild = null) {
     if (!guildId) return;
     const gId = String(guildId);
+    const key = buildBotGuildKey(client, gId);
 
-    manualDisconnectGuilds.delete(gId);
-    leavingInProgressGuilds.delete(gId);
-    cancelNodeReconnectTimer(gId);
-    cancelInactivityTimer(gId);
+    manualDisconnectGuilds.delete(key);
+    leavingInProgressGuilds.delete(key);
+    cancelNodeReconnectTimer(gId, client);
+    cancelInactivityTimer(gId, client);
 
     const targetGuild = guild || client?.guilds?.cache?.get?.(gId) || { id: gId };
     const currentData = client?.data?.get?.(`guildData_${gId}`) || normalizeGuildData(client, targetGuild, { id: gId });
@@ -239,7 +255,7 @@ async function clearManualDisconnect(client, guildId, guild = null) {
         client?.data?.set?.(`guildData_${gId}`, currentData);
     }
 
-    if (typeof client?.guildData?.findOneAndUpdate === "function") {
+    if (typeof client?.guildData?.findOneAndUpdate === "function" && (!client.guildData.db || client.guildData.db.readyState === 1)) {
         await client.guildData
             .findOneAndUpdate({ id: gId }, { $set: { manualDisconnect: false } }, { upsert: true, returnDocument: "after" })
             .catch((err) => {
@@ -249,53 +265,23 @@ async function clearManualDisconnect(client, guildId, guild = null) {
 }
 
 /**
- * Performs a complete, authoritative manual disconnect for `/leave` in a single guild:
- * 1. Marks `manualDisconnect = true` and disables/clears `reconnect` for this guild in memory & MongoDB.
- * 2. Cancels all pending reconnect & inactivity timers for this guild.
- * 3. Clears queue & loop prior to `player.destroy()` so Lavalink TrackEnd callbacks cannot restart playback.
- * 4. Destroys the Rainlink player, cleans up `rainlink.voices`, and sends Gateway Op 4 `channel_id: null`.
+ * Performs a complete, authoritative manual disconnect for `/leave` on THIS bot in a single guild.
  */
 async function performManualLeave(client, guild, player = null) {
     const gId = String(guild.id);
+    const key = buildBotGuildKey(client, gId);
 
-    // 1. Synchronously lock guild into manualDisconnect BEFORE any async call or event emission
-    manualDisconnectGuilds.add(gId);
-    leavingInProgressGuilds.add(gId);
-    cancelNodeReconnectTimer(gId);
-    cancelInactivityTimer(gId);
+    manualDisconnectGuilds.add(key);
+    leavingInProgressGuilds.add(key);
+    cancelNodeReconnectTimer(gId, client);
+    cancelInactivityTimer(gId, client);
 
     const currentGuildData = client?.data?.get?.(`guildData_${gId}`) || normalizeGuildData(client, guild, { id: gId });
-
-    const resetReconnect = {
-        status: false,
-        text: null,
-        voice: null,
-    };
-
     currentGuildData.manualDisconnect = true;
-    currentGuildData.reconnect = resetReconnect;
+    currentGuildData.manualDisconnectBotId = client?.user?.id || null;
     client?.data?.set?.(`guildData_${gId}`, currentGuildData);
 
     try {
-        // 2. Persist reconnect reset + manualDisconnect to MongoDB for this guild
-        if (typeof client?.guildData?.findOneAndUpdate === "function") {
-            await client.guildData
-                .findOneAndUpdate(
-                    { id: gId },
-                    {
-                        $set: {
-                            manualDisconnect: true,
-                            reconnect: resetReconnect,
-                        },
-                    },
-                    { upsert: true, returnDocument: "after" },
-                )
-                .catch((err) => {
-                    Logger.debug(`[VoiceSession] Gagal menyimpan status manualDisconnect ke MongoDB (${gId}): ${err?.message || err}`);
-                });
-        }
-
-        // 3. Stop playback, clear queue/loop, delete Now Playing message, and destroy Rainlink player
         const activePlayer = player || client?.rainlink?.players?.get?.(gId) || null;
         if (activePlayer) {
             if (activePlayer._npCollector) {
@@ -344,7 +330,6 @@ async function performManualLeave(client, guild, player = null) {
             client?.rainlink?.players?.delete?.(gId);
         }
 
-        // 4. Clean up Rainlink voice manager state & ensure Discord Gateway disconnects from voice
         const voiceHandler = client?.rainlink?.voices?.get?.(gId);
         if (voiceHandler) {
             try {
@@ -379,7 +364,7 @@ async function performManualLeave(client, guild, player = null) {
             }
         }
     } finally {
-        leavingInProgressGuilds.delete(gId);
+        leavingInProgressGuilds.delete(key);
     }
 }
 
@@ -387,6 +372,7 @@ module.exports = {
     PLAYER_STATE_CONNECTED,
     PLAYER_STATE_DISCONNECTED,
     PLAYER_STATE_DESTROYED,
+    buildBotGuildKey,
     syncGuildDisconnectMemory,
     isGuildManuallyDisconnected,
     isGuildLeavingInProgress,

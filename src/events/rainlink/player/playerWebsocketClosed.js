@@ -1,13 +1,15 @@
 const { EmbedBuilder } = require("discord.js");
 const {
     PLAYER_STATE_DESTROYED,
+    buildBotGuildKey,
     isGuildManuallyDisconnected,
     isGuildLeavingInProgress,
 } = require("../../../functions/voiceSessionManager.js");
 const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
 const Logger = require("../../../utils/logger");
 
-const recentWsRecoveryByGuild = new Map();
+// Scoped by `${botApplicationId}:${guildId}` so 10 concurrent bots never share cooldowns
+const recentWsRecoveryByBotGuild = new Map();
 
 module.exports = async (client, player, data) => {
     if (
@@ -15,7 +17,7 @@ module.exports = async (client, player, data) => {
         player.state === PLAYER_STATE_DESTROYED ||
         player.sudoDestroy ||
         isGuildManuallyDisconnected(client, player.guildId) ||
-        isGuildLeavingInProgress(player.guildId)
+        isGuildLeavingInProgress(player.guildId, client)
     ) {
         return;
     }
@@ -23,6 +25,7 @@ module.exports = async (client, player, data) => {
     const code = Number(data?.code || 0);
     const reason = String(data?.reason || "Voice WebSocket closed");
     const guildId = String(player.guildId || "");
+    const scopeKey = buildBotGuildKey(client, guildId);
 
     Logger.music("warn", `Discord voice WebSocket closed (code=${code}, byRemote=${Boolean(data?.byRemote)})`, {
         guildId,
@@ -33,7 +36,6 @@ module.exports = async (client, player, data) => {
 
     const channel = client.channels?.cache?.get?.(player.textId);
 
-    // 4017 = Discord DAVE E2EE protocol required (Lavalink < 4.2.0 without libdave)
     if (code === 4017) {
         await cleanupNowPlayingMessage(player, true);
         if (channel?.send) {
@@ -47,11 +49,10 @@ module.exports = async (client, player, data) => {
         return;
     }
 
-    // Transient voice session/server invalidation (4006, 4009, 4015) — refresh Gateway Op 4 once within cooldown
     if ([4006, 4009, 4015].includes(code) && player.voiceId) {
-        const lastAttempt = Number(recentWsRecoveryByGuild.get(guildId) || 0);
+        const lastAttempt = Number(recentWsRecoveryByBotGuild.get(scopeKey) || 0);
         if (Date.now() - lastAttempt > 15000) {
-            recentWsRecoveryByGuild.set(guildId, Date.now());
+            recentWsRecoveryByBotGuild.set(scopeKey, Date.now());
             try {
                 player.voice?.sendVoiceUpdate?.();
                 Logger.music("info", "Requested fresh Discord voice state handshake after transient WS close", {
@@ -61,12 +62,11 @@ module.exports = async (client, player, data) => {
                 });
                 return;
             } catch (err) {
-                Logger.debug(`[PlayerWebsocketClosed] Gagal memulihkan sesi voice (${guildId}): ${err?.message || err}`);
+                Logger.debug(`[PlayerWebsocketClosed] Gagal memulihkan sesi voice (${scopeKey}): ${err?.message || err}`);
             }
         }
     }
 
-    // 4014 = Disconnected from channel / permission revoked
     if (code === 4014) {
         const guild = client.guilds?.cache?.get?.(guildId);
         const botChannelId = guild?.members?.me?.voice?.channelId;

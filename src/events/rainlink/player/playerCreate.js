@@ -1,7 +1,10 @@
+const { openOrSyncVoiceSession666 } = require("../../../functions/profileNotificationManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, player) => {
     if (!player) return;
+
+    await openOrSyncVoiceSession666(client, player).catch(() => {});
 
     const guild = client.guilds.cache.get(player.guildId);
     if (!guild) return;

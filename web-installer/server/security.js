@@ -17,6 +17,13 @@ const ALLOWED_MODELS = new Set([
     "GuessTheSong",
     "MusicBattle",
     "PremiumConfig",
+    "Profile666Stats",
+    "UserGuildAchievements",
+    "MusicSession666",
+    "ProfileNotificationConfig",
+    "MessageClaimLocks",
+    "BotGuildPresence",
+    "Auto247Config",
 ]);
 
 const ALLOWED_DB_OPERATIONS = new Set([

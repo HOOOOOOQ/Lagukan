@@ -18,6 +18,13 @@ const CLIENT_MODEL_BINDINGS = Object.freeze([
     { prop: "guessTheSongData", modelName: "GuessTheSong" },
     { prop: "musicBattleData", modelName: "MusicBattle" },
     { prop: "premiumConfigData", modelName: "PremiumConfig" },
+    { prop: "profile666StatsData", modelName: "Profile666Stats" },
+    { prop: "userGuildAchievementData", modelName: "UserGuildAchievements" },
+    { prop: "musicSession666Data", modelName: "MusicSession666" },
+    { prop: "profileNotificationConfigData", modelName: "ProfileNotificationConfig" },
+    { prop: "messageClaimLockData", modelName: "MessageClaimLocks" },
+    { prop: "botGuildPresenceData", modelName: "BotGuildPresence" },
+    { prop: "auto247ConfigData", modelName: "Auto247Config" },
 ]);
 
 let cloudReadyState = false;

@@ -3,6 +3,8 @@ const mongoose = require("mongoose");
 const emojiConfig = require("../../../settings/emoji.js");
 const { normalizeGuildData, normalizeUserData } = require("../../../functions/createData.js");
 const { syncGuildDisconnectMemory } = require("../../../functions/voiceSessionManager.js");
+const { startBotPresenceHeartbeat } = require("../../../functions/profRoutingEngine.js");
+const { syncAllAuto247OnStartup } = require("../../../functions/auto247Manager.js");
 const { isCloudDatabaseReady } = require("../../../databases/cloudAdapter.js");
 const Logger = require("../../../utils/logger");
 
@@ -22,7 +24,7 @@ module.exports = async (client) => {
             const normalized = normalizeGuildData(client, guild, raw);
 
             client.data.set(`guildData_${x.id}`, normalized);
-            syncGuildDisconnectMemory(x.id, normalized);
+            syncGuildDisconnectMemory(x.id, normalized, client);
 
             if (guild) {
                 await client.guildData
@@ -55,6 +57,14 @@ module.exports = async (client) => {
             }
         }
     }
+
+    // Start 10-bot presence heartbeat for deterministic `666!prof` routing
+    startBotPresenceHeartbeat(client);
+
+    // Automatically connect this bot to its configured 24/7 voice channels on startup
+    await syncAllAuto247OnStartup(client).catch((err) => {
+        Logger.debug(`[Auto247] Startup sync menunggu kesiapan Lavalink: ${err?.message || err}`);
+    });
 
     if (client._presenceInterval) {
         clearInterval(client._presenceInterval);

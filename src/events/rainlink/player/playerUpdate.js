@@ -1,6 +1,7 @@
 const { PLAYER_STATE_DESTROYED } = require("../../../functions/voiceSessionManager.js");
 const { refreshNowPlayingDashboard } = require("../../../functions/nowPlayingManager.js");
 const { onTrackSessionTick } = require("../../../functions/musicStatsEngine.js");
+const { onProfile666Tick } = require("../../../functions/profile666Engine.js");
 const { saveAutoResumeSnapshot } = require("../../../functions/radioAndSleepManager.js");
 
 module.exports = async (client, player, data) => {
@@ -17,6 +18,7 @@ module.exports = async (client, player, data) => {
 
     if (!player.data?.get?.("guessTheSongActive")) {
         onTrackSessionTick(client, player);
+        onProfile666Tick(client, player);
         if (player.playing && !player.paused) {
             saveAutoResumeSnapshot(player);
         }

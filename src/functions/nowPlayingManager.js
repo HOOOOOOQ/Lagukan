@@ -1,5 +1,6 @@
 const {
     ActionRowBuilder,
+    AttachmentBuilder,
     ButtonBuilder,
     ButtonStyle,
     EmbedBuilder,
@@ -22,6 +23,8 @@ const { handleLyricsCommand } = require("./lyricsProvider.js");
 const { safeReply, safeDeferUpdate, safeEditReply } = require("./interactionResponder.js");
 const { PLAYER_STATE_DESTROYED, getGuildPlayer } = require("./voiceSessionManager.js");
 const { peekCachedGuildPremiumTheme } = require("./premiumSystem.js");
+const { THEME_666, renderNowPlayingCard666 } = require("./cardRenderer666.js");
+const { updateSessionNowPlayingMessageId } = require("./profileNotificationManager.js");
 const Logger = require("../utils/logger");
 
 const PROGRESS_BAR_SEGMENTS = 14;
@@ -46,7 +49,9 @@ function buildProgressBar(positionMs, durationMs, isStream = false) {
 
     let bar = "";
     for (let i = 0; i < PROGRESS_BAR_SEGMENTS; i++) {
-        bar += i === indicatorIndex ? "🔘" : "▬";
+        if (i < indicatorIndex) bar += "▰";
+        else if (i === indicatorIndex) bar += "🟣";
+        else bar += "▱";
     }
 
     return `\`${convertTime(clampedPos)}\` ${bar} \`${convertTime(durationMs)}\``;
@@ -75,9 +80,9 @@ function hasAnyPreviousTrack(client, player) {
  */
 function buildNowPlayingEmbed(client, player, trackOverride = null) {
     const premiumTheme = player?.guildId ? peekCachedGuildPremiumTheme(player.guildId) : null;
-    const botName = premiumTheme?.customDashboardTitle || client?.config?.botName || "Lagukan";
-    const embedColor = premiumTheme?.customAccentColor || client?.config?.embedColor || "#ff0051";
-    const iconUrl = client?.user?.displayAvatarURL?.() || undefined;
+    const botName = premiumTheme?.customDashboardTitle || client?.user?.username || client?.config?.botName || "Lagukan";
+    const embedColor = premiumTheme?.customAccentColor || THEME_666.embedColor;
+    const iconUrl = client?.user?.displayAvatarURL?.({ extension: "png", size: 128 }) || undefined;
     const track = trackOverride || player?.queue?.current;
 
     if (!player || !track) {
@@ -125,7 +130,7 @@ function buildNowPlayingEmbed(client, player, trackOverride = null) {
 
     const embed = new EmbedBuilder()
         .setAuthor({
-            name: isPaused ? `${botName} • Playback Paused` : `${botName} • Now Playing`,
+            name: isPaused ? `666 • ${botName} • Playback Paused` : `666 • ${botName} • Now Playing`,
             iconURL: iconUrl,
         })
         .setColor(embedColor)
@@ -133,24 +138,27 @@ function buildNowPlayingEmbed(client, player, trackOverride = null) {
             `${titleLine}\n👤 **Artist:** ${author} • 💿 **Album:** ${albumLabel} • \`${playbackStateLabel}\`\n\n${progressLine}${serverMuteAlert}`,
         )
         .addFields(
-            { name: "Album", value: `\`${albumLabel}\``, inline: true },
-            { name: "Source", value: `\`${sourceLabel}\``, inline: true },
+            { name: "Requested By", value: requesterLabel, inline: true },
             { name: "Duration", value: `\`${durationText}\``, inline: true },
             { name: "Elapsed / Remaining", value: `\`${elapsedText}\` / \`${remainingText}\``, inline: true },
-            { name: "Requested By", value: requesterLabel, inline: true },
+            { name: "Bot", value: `\`${botName}\``, inline: true },
+            { name: "Source", value: `\`${sourceLabel}\``, inline: true },
             { name: "Queue", value: queueSummary, inline: true },
             { name: "Volume", value: `\`🔊 ${volumeValue}\``, inline: true },
-            { name: "Repeat", value: `\`${repeatLabel}\``, inline: true },
-            { name: "Shuffle", value: isShuffled ? "`🔀 On`" : "`Off`", inline: true },
+            { name: "Loop", value: `\`${repeatLabel}\``, inline: true },
             { name: "Autoplay", value: autoplayEnabled ? "`✨ On`" : "`Off`", inline: true },
         )
         .setFooter({
-            text: `${botName} Music Dashboard`,
+            text: `666 Neon Music Engine • ${botName}`,
             iconURL: iconUrl,
         });
 
     if (track.artworkUrl && /^https?:\/\//i.test(String(track.artworkUrl))) {
         embed.setThumbnail(track.artworkUrl);
+    }
+
+    if (player?._has666CardAttachment) {
+        embed.setImage("attachment://666-nowplaying.png");
     }
 
     return embed;
@@ -165,8 +173,8 @@ function safeEmoji(customEmoji, unicodeFallback) {
 
 /**
  * Builds the 3-row interactive button controller:
- * Row 1: [Pause / Resume] [Skip] [Stop] [Queue]
- * Row 2: [Previous] [Shuffle] [Loop] [Volume]
+ * Row 1 (Primary 666 Controls): [Pause / Resume] [Skip] [Loop] [Queue]
+ * Row 2: [Previous] [Stop] [Shuffle] [Volume]
  * Row 3: [Autoplay] [Lyrics] [Favorite]
  */
 function buildNowPlayingComponents(client, player) {
@@ -189,10 +197,10 @@ function buildNowPlayingComponents(client, player) {
             .setLabel("Skip")
             .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
-            .setCustomId("np:stop")
-            .setEmoji(safeEmoji(playerEmoji.stop, "⏹️"))
-            .setLabel("Stop")
-            .setStyle(ButtonStyle.Danger),
+            .setCustomId("np:loop")
+            .setEmoji(safeEmoji(playerEmoji.loop, "🔁"))
+            .setLabel(loopMode === "song" ? "Loop: Song" : loopMode === "queue" ? "Loop: Queue" : "Loop")
+            .setStyle(loopMode !== "none" ? ButtonStyle.Primary : ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId("np:queue")
             .setEmoji("📋")
@@ -208,16 +216,16 @@ function buildNowPlayingComponents(client, player) {
             .setStyle(ButtonStyle.Secondary)
             .setDisabled(!hasPrevious),
         new ButtonBuilder()
+            .setCustomId("np:stop")
+            .setEmoji(safeEmoji(playerEmoji.stop, "⏹️"))
+            .setLabel("Stop")
+            .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
             .setCustomId("np:shuffle")
             .setEmoji(safeEmoji(playerEmoji.shuffle, "🔀"))
             .setLabel("Shuffle")
             .setStyle(player?.data?.get?.("shuffled") ? ButtonStyle.Primary : ButtonStyle.Secondary)
             .setDisabled(!canShuffle),
-        new ButtonBuilder()
-            .setCustomId("np:loop")
-            .setEmoji(safeEmoji(playerEmoji.loop, "🔁"))
-            .setLabel(loopMode === "song" ? "Loop: Song" : loopMode === "queue" ? "Loop: Queue" : "Loop")
-            .setStyle(loopMode !== "none" ? ButtonStyle.Primary : ButtonStyle.Secondary),
         new ButtonBuilder()
             .setCustomId("np:volume")
             .setEmoji(safeEmoji(playerEmoji.volup, "🔊"))
@@ -404,8 +412,19 @@ function attachDashboardCollector(client, player, message) {
     collector.on("collect", (btnInteraction) => {
         void (async () => {
             try {
+                if (btnInteraction.applicationId && client?.user?.id && String(btnInteraction.applicationId) !== String(client.user.id)) {
+                    return;
+                }
+                if (
+                    btnInteraction.message?.author?.id &&
+                    client?.user?.id &&
+                    String(btnInteraction.message.author.id) !== String(client.user.id)
+                ) {
+                    return;
+                }
+
                 const livePlayer = getGuildPlayer(client, player.guildId);
-                const replyEmbed = new EmbedBuilder().setColor(embedColor);
+                const replyEmbed = new EmbedBuilder().setColor(THEME_666.embedColor);
 
                 if (
                     !livePlayer ||
@@ -721,16 +740,22 @@ function attachDashboardCollector(client, player, message) {
 
 const dashboardSendLocks = new Map();
 
+function getDashboardLockKey(client, guildId) {
+    return `${String(client?.user?.id || "bot")}:${String(guildId || "")}`;
+}
+
 /**
- * Sends a fresh Now Playing Dashboard to the player's text channel and attaches its interactive collector.
- * Serialized per-guild so concurrent trackStart + command handlers never post duplicate dashboards.
+ * Sends or edits the Now Playing 666 Dashboard in-place when tracks change.
+ * - Persists `nowPlayingMessageId` and edits the existing message when switching songs to prevent spam.
+ * - Scoped by `${botApplicationId}:${guildId}` so 10 concurrent bots never collide.
  */
 async function sendOrReplaceNowPlayingDashboard(client, player, track = null) {
     if (!player || player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) return null;
     if (player.data?.get?.("guessTheSongActive")) return null;
 
     const gId = String(player.guildId || "");
-    const previousOp = dashboardSendLocks.get(gId) || Promise.resolve();
+    const lockKey = getDashboardLockKey(client, gId);
+    const previousOp = dashboardSendLocks.get(lockKey) || Promise.resolve();
 
     const task = previousOp
         .catch(() => {})
@@ -741,39 +766,105 @@ async function sendOrReplaceNowPlayingDashboard(client, player, track = null) {
             const currentTrack = track || player.queue?.current;
             if (!currentTrack) return null;
 
-            await cleanupNowPlayingMessage(player, true);
-
             const textChannel = client.channels?.cache?.get?.(player.textId);
             if (!textChannel || typeof textChannel.send !== "function") return null;
+
+            // Stop previous collector before updating or replacing message
+            await cleanupNowPlayingMessage(player, false);
+
+            const botName = client?.user?.username || client?.config?.botName || "Lagukan 666";
+            const requesterName = currentTrack.requester
+                ? currentTrack.requester.globalName || currentTrack.requester.username || String(currentTrack.requester.id || "Listener")
+                : "Autoplay";
+            const totalDurationMs = Math.max(0, Number(currentTrack.duration || 0));
+            const elapsedMs = Math.max(0, Number(player.position || 0));
+            const durationText = currentTrack.isStream ? "LIVE" : convertTime(totalDurationMs);
+            const elapsedText = convertTime(elapsedMs);
+            const progressRatio = totalDurationMs > 0 ? Math.min(1, elapsedMs / totalDurationMs) : 0.08;
+
+            const pngCard = await renderNowPlayingCard666({
+                botId: String(client?.user?.id || "bot"),
+                botName,
+                trackKey: String(currentTrack.identifier || currentTrack.uri || currentTrack.title || ""),
+                title: currentTrack.title || "Unknown Title",
+                author: currentTrack.author || "Unknown Artist",
+                requester: requesterName,
+                durationText,
+                elapsedText,
+                progressRatio,
+                artworkUrl: currentTrack.artworkUrl || null,
+                isPaused: Boolean(player.paused),
+            });
+
+            const files = [];
+            if (pngCard) {
+                player._has666CardAttachment = true;
+                files.push(new AttachmentBuilder(pngCard, { name: "666-nowplaying.png" }));
+            } else {
+                player._has666CardAttachment = false;
+            }
 
             const embed = buildNowPlayingEmbed(client, player, currentTrack);
             const components = buildNowPlayingComponents(client, player);
 
-            const sent = await textChannel.send({ embeds: [embed], components }).catch((err) => {
-                Logger.debug(`[NowPlayingDashboard] Gagal mengirim pesan dashboard: ${err?.message || err}`);
-                return null;
-            });
+            let sent = null;
+            const existingMsg = player.message;
+            const existingChannelId = String(existingMsg?.channelId || existingMsg?.channel?.id || "");
+
+            // Section 2: Edit existing Now Playing message when song changes instead of spamming new messages!
+            if (
+                existingMsg &&
+                typeof existingMsg.edit === "function" &&
+                (!existingChannelId || existingChannelId === String(player.textId))
+            ) {
+                sent = await existingMsg
+                    .edit({
+                        embeds: [embed],
+                        components,
+                        files,
+                    })
+                    .catch((err) => {
+                        if (err?.code === 10008 || err?.rawError?.code === 10008) {
+                            player.message = null;
+                        }
+                        return null;
+                    });
+            }
+
+            if (!sent) {
+                sent = await textChannel
+                    .send({
+                        embeds: [embed],
+                        components,
+                        files,
+                    })
+                    .catch((err) => {
+                        Logger.debug(`[NowPlayingDashboard] Gagal mengirim pesan dashboard: ${err?.message || err}`);
+                        return null;
+                    });
+            }
 
             if (!sent) return null;
 
-            // Re-check player state in case player was destroyed while sending
             if (player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) {
                 await sent.delete().catch(() => {});
                 return null;
             }
 
             player.message = sent;
+            player.data?.set?.("nowPlayingMessageId", sent.id);
+            await updateSessionNowPlayingMessageId(client, gId, sent.id);
             player._lastProgressEditAt = Date.now();
             attachDashboardCollector(client, player, sent);
             return sent;
         });
 
-    dashboardSendLocks.set(gId, task);
+    dashboardSendLocks.set(lockKey, task);
     try {
         return await task;
     } finally {
-        if (dashboardSendLocks.get(gId) === task) {
-            dashboardSendLocks.delete(gId);
+        if (dashboardSendLocks.get(lockKey) === task) {
+            dashboardSendLocks.delete(lockKey);
         }
     }
 }
@@ -784,7 +875,8 @@ async function sendOrReplaceNowPlayingDashboard(client, player, track = null) {
 async function ensureNowPlayingDashboardVisible(client, player, fallbackTrack = null) {
     if (!player || player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy) return null;
     const gId = String(player.guildId || "");
-    const pending = dashboardSendLocks.get(gId);
+    const lockKey = getDashboardLockKey(client, gId);
+    const pending = dashboardSendLocks.get(lockKey);
     if (pending) {
         const msg = await pending.catch(() => null);
         if (msg || player.message) return msg || player.message;
