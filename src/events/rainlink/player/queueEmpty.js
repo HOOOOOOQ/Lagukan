@@ -11,6 +11,8 @@ const {
     getGuildMusicSettings,
 } = require("../../../functions/musicPermissions.js");
 const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
+const { getAuto247Config } = require("../../../functions/auto247Manager.js");
+const { THEME_666 } = require("../../../functions/cardRenderer666.js");
 const {
     getGuildRadioState,
     stopGuildRadioMode,
@@ -24,17 +26,15 @@ module.exports = async (client, player) => {
         player.state === PLAYER_STATE_DESTROYED ||
         player.sudoDestroy ||
         isGuildManuallyDisconnected(client, player.guildId) ||
-        isGuildLeavingInProgress(player.guildId)
+        isGuildLeavingInProgress(player.guildId, client)
     ) {
         return;
     }
 
-    // Guard against Rainlink 1.2.9 emitting queueEmpty during loadFailed/cleanup when tracks remain in queue
     if (Number(player.queue?.size || 0) > 0 || player.queue?.current) {
         return;
     }
 
-    // Honor explicit user Stop (/stop or [Stop] button): do not auto-restart Autoplay/Radio or auto-leave immediately
     if (player._manualStopAt && Date.now() - player._manualStopAt < 5000) {
         player._manualStopAt = 0;
         clearAutoResumeSnapshot(player.guildId);
@@ -52,7 +52,7 @@ module.exports = async (client, player) => {
         const nextRadioTrack = await pickNextRadioOrAutoDjTrack(client, player);
         if (
             isGuildManuallyDisconnected(client, player.guildId) ||
-            isGuildLeavingInProgress(player.guildId) ||
+            isGuildLeavingInProgress(player.guildId, client) ||
             player.state === PLAYER_STATE_DESTROYED ||
             player.sudoDestroy
         ) {
@@ -68,7 +68,6 @@ module.exports = async (client, player) => {
             return;
         }
 
-        // Cleanly stop Radio Mode if no valid replacement source could be verified
         stopGuildRadioMode(player.guildId);
     }
 
@@ -79,7 +78,7 @@ module.exports = async (client, player) => {
 
         if (
             isGuildManuallyDisconnected(client, player.guildId) ||
-            isGuildLeavingInProgress(player.guildId) ||
+            isGuildLeavingInProgress(player.guildId, client) ||
             player.state === PLAYER_STATE_DESTROYED ||
             player.sudoDestroy
         ) {
@@ -88,8 +87,8 @@ module.exports = async (client, player) => {
 
         if (!nextTrack) {
             await setGuildAutoplay(client, player.guildId, false);
-            const guildData = client.data.get(`guildData_${player.guildId}`);
-            if (guildData && !guildData.manualDisconnect && guildData.reconnect?.status) return;
+            const auto247 = await getAuto247Config(client, player.guildId);
+            if (auto247?.enabled) return;
 
             if (player.state !== PLAYER_STATE_DESTROYED && !player.sudoDestroy) {
                 await Promise.resolve(player.destroy()).catch(() => {});
@@ -106,23 +105,24 @@ module.exports = async (client, player) => {
         return;
     }
 
-    const guildData = client.data.get(`guildData_${player.guildId}`);
-    if (guildData && !guildData.manualDisconnect && guildData.reconnect?.status) {
+    // Stay connected automatically when per-bot Auto 24/7 is enabled!
+    const auto247Cfg = await getAuto247Config(client, player.guildId);
+    if (auto247Cfg?.enabled) {
         return;
     }
 
     const musicSettings = getGuildMusicSettings(client, player.guildId);
     if (musicSettings?.autoLeave?.enabled === false) {
         const stayEmbed = new EmbedBuilder()
-            .setColor(client.config.embedColor)
+            .setColor(THEME_666.embedColor)
             .setDescription("Queue has finished. Staying in voice channel because Auto-Leave is disabled.");
         if (channel) await channel.send({ embeds: [stayEmbed] }).catch(() => {});
         return;
     }
 
     const embed = new EmbedBuilder()
-        .setColor(client.config.embedColor)
-        .setDescription("The queue is empty. Leaving voice channel (use `/247` or `/musicconfig` to stay connected).");
+        .setColor(THEME_666.embedColor)
+        .setDescription("The queue is empty. Leaving voice channel (use `/247-setup` or `/musicconfig` to stay connected 24/7).");
 
     if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
 

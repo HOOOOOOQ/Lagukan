@@ -3,6 +3,8 @@ const { resetPlaybackFailure } = require("../../../functions/nodeHealthManager.j
 const { recordGuildTrackHistory } = require("../../../functions/musicPermissions.js");
 const { sendOrReplaceNowPlayingDashboard } = require("../../../functions/nowPlayingManager.js");
 const { onTrackSessionStart } = require("../../../functions/musicStatsEngine.js");
+const { openOrSyncVoiceSession666 } = require("../../../functions/profileNotificationManager.js");
+const { onProfile666TrackStart } = require("../../../functions/profile666Engine.js");
 const { resetPartyVoteSkip } = require("../../../functions/musicPartySystem.js");
 const { saveAutoResumeSnapshot } = require("../../../functions/radioAndSleepManager.js");
 const { refreshRequestPanelMessage } = require("../../../functions/voiceRequestSystem.js");
@@ -15,8 +17,12 @@ module.exports = async (client, player, track) => {
 
     const isGuessTheSong = Boolean(player.data?.get?.("guessTheSongActive"));
     if (!isGuessTheSong) {
+        await openOrSyncVoiceSession666(client, player).catch(() => {});
         recordGuildTrackHistory(client, player.guildId, track).catch(() => {});
-        onTrackSessionStart(client, player, track).catch(() => {});
+        await Promise.all([
+            onTrackSessionStart(client, player, track).catch(() => {}),
+            onProfile666TrackStart(client, player, track).catch(() => {}),
+        ]);
         resetPartyVoteSkip(client, player.guildId).catch(() => {});
         saveAutoResumeSnapshot(player);
         refreshRequestPanelMessage(client, player.guildId).catch(() => {});

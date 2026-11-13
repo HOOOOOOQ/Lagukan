@@ -57,6 +57,13 @@ class LagukanClient extends Client {
         this.guessTheSongData = require("../databases/schema/guessTheSong.js");
         this.musicBattleData = require("../databases/schema/musicBattle.js");
         this.premiumConfigData = require("../databases/schema/premiumConfig.js");
+        this.profile666StatsData = require("../databases/schema/profile666Stats.js");
+        this.userGuildAchievementData = require("../databases/schema/userGuildAchievement.js");
+        this.musicSession666Data = require("../databases/schema/musicSession666.js");
+        this.profileNotificationConfigData = require("../databases/schema/profileNotificationConfig.js");
+        this.messageClaimLockData = require("../databases/schema/messageClaimLock.js");
+        this.botGuildPresenceData = require("../databases/schema/botGuildPresence.js");
+        this.auto247ConfigData = require("../databases/schema/auto247Config.js");
 
         this.messageContentFallback = false;
         this.prefix = new Collection();

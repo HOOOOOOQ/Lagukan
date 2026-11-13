@@ -115,8 +115,9 @@ module.exports = {
             settings = await updateGuildMusicSettings(client, interaction.guild, patch);
         }
 
-        const guildData = client.data.get(`guildData_${interaction.guildId}`);
-        const mode247 = Boolean(guildData?.reconnect?.status);
+        const { getAuto247Config } = require("../../../functions/auto247Manager.js");
+        const auto247Doc = await getAuto247Config(client, interaction.guildId);
+        const mode247 = Boolean(auto247Doc?.enabled);
 
         embed
             .setAuthor({

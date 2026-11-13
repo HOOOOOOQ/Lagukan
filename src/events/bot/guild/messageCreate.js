@@ -3,6 +3,7 @@ const { createDataGuild, createDataUser } = require("../../../functions/createDa
 const { permissions } = require("../../../functions/getPermission.js");
 const { handleRequestChannelMessage } = require("../../../functions/voiceRequestSystem.js");
 const { handleGuessTheSongMessage } = require("../../../functions/musicGamesSystem.js");
+const { handleRouted666ProfMessage } = require("../../../functions/profRoutingEngine.js");
 const Logger = require("../../../utils/logger");
 
 const MAX_PROCESSED_MESSAGE_IDS = 2000;
@@ -35,16 +36,23 @@ module.exports = async (client, message) => {
     // Deduplicate message ID per bot instance so a message is never processed twice
     if (markMessageProcessed(client, message.id)) return;
 
-    // 1. Active Guess The Song Round Plain-Text Answer Detection (scoped to this bot's active game session)
+    // 1. 10-Bot Routed Profile Command ONLY (`666!prof` & `666!prof @user` — music prefixes remain disabled!)
+    const handledProf = await handleRouted666ProfMessage(client, message).catch((err) => {
+        Logger.debug(`[MessageCreate] Penanganan 666!prof selesai dengan error aman: ${err?.message || err}`);
+        return true;
+    });
+    if (handledProf) return;
+
+    // 2. Active Guess The Song Round Plain-Text Answer Detection (scoped to this bot's active game session)
     const handledGuess = await handleGuessTheSongMessage(client, message).catch(() => false);
     if (handledGuess) return;
 
-    // 2. Dedicated Voice Channel Music Request Panel Input (scoped to the specific bot owning the panel)
+    // 3. Dedicated Voice Channel Music Request Panel Input (scoped to the specific bot owning the panel)
     const handledReq = await handleRequestChannelMessage(client, message).catch(() => false);
     if (handledReq) return;
 
-    // 3. Direct Bot Mention ONLY (`<@BOT_ID>` or `<@BOT_ID> <dev_command>`)
-    // Shared text prefixes (`666`, `666!`, `!`) are intentionally NOT processed so 8 bots never respond simultaneously.
+    // 4. Direct Bot Mention ONLY (`<@BOT_ID>` or `<@BOT_ID> <dev_command>`)
+    // Music text prefixes (`666 play`, `666 pause`, `666 skip`) are strictly disabled.
     const rawContent = String(message.content || "").trim();
     const botIdEscaped = escapeRegex(client.user.id);
     const mentionMatch = rawContent.match(new RegExp(`^<@!?${botIdEscaped}>(?:\\s+([\\s\\S]*))?$`));
@@ -65,12 +73,13 @@ module.exports = async (client, message) => {
     const remainder = String(mentionMatch[1] || "").trim();
 
     if (!remainder) {
-        embed.setDescription(`Hello! I'm **${botName}**. Use \`/help\` to view available music slash commands.`);
+        embed.setDescription(
+            `Hello! I'm **${botName}**. Use \`/help\` to view available music slash commands, or \`666!prof\` / \`/profile\` for your 666 Music Profile.`,
+        );
         await message.reply({ embeds: [embed] }).catch(() => {});
         return;
     }
 
-    // Developer-only commands addressed explicitly to this bot (`@Bot lavalink`, `@Bot maintenance`, etc.)
     const isDeveloper = message.author.id === client.config.owner || Boolean(client.config.dev?.includes?.(message.author.id));
     if (!isDeveloper) return;
 

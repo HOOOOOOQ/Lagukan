@@ -24,8 +24,12 @@ const LEVEL_TIERS = [
     { level: 6, minXp: 10000, title: "Lagukan Legend", badge: "💎" },
 ];
 
-// Active per-guild playback tracking sessions: Map<guildId, SessionObject>
+// Active per-(bot, guild) playback tracking sessions: Map<`${botId}:${guildId}`, SessionObject>
 const activePlaybackSessions = new Map();
+
+function getPlaybackSessionKey(client, guildId) {
+    return `${String(client?.user?.id || "bot")}:${String(guildId || "")}`;
+}
 
 function computeLevelInfo(rawXp = 0) {
     const xp = Math.max(0, Math.floor(Number(rawXp || 0)));
@@ -271,7 +275,8 @@ async function onTrackSessionStart(client, player, track) {
     if (player.data?.get?.("guessTheSongActive")) return;
 
     const gid = String(player.guildId);
-    if (activePlaybackSessions.has(gid)) {
+    const pbKey = getPlaybackSessionKey(client, gid);
+    if (activePlaybackSessions.has(pbKey)) {
         await onTrackSessionEnd(client, player, "replaced").catch(() => {});
     }
 
@@ -310,7 +315,7 @@ async function onTrackSessionStart(client, player, track) {
         settled: false,
     };
 
-    activePlaybackSessions.set(gid, session);
+    activePlaybackSessions.set(pbKey, session);
 
     // Increment tracksStarted once per listener in this session
     for (const uid of participants) {
@@ -348,7 +353,7 @@ async function onTrackSessionStart(client, player, track) {
 function onTrackSessionTick(client, player) {
     if (!player?.guildId) return;
     const gid = String(player.guildId);
-    const session = activePlaybackSessions.get(gid);
+    const session = activePlaybackSessions.get(getPlaybackSessionKey(client, gid));
     if (!session || session.settled) return;
 
     const now = Date.now();
@@ -376,11 +381,12 @@ function onTrackSessionTick(client, player) {
 async function onTrackSessionFailed(client, player, track) {
     if (!player?.guildId) return;
     const gid = String(player.guildId);
-    const active = activePlaybackSessions.get(gid);
+    const pbKey = getPlaybackSessionKey(client, gid);
+    const active = activePlaybackSessions.get(pbKey);
 
     if (active && !active.settled) {
         active.settled = true;
-        activePlaybackSessions.delete(gid);
+        activePlaybackSessions.delete(pbKey);
     }
 
     const uid = track?.requester?.id && String(track.requester.id) !== String(client?.user?.id || "") ? String(track.requester.id) : null;
@@ -430,11 +436,12 @@ async function onTrackSessionFailed(client, player, track) {
 async function onTrackSessionEnd(client, player, reason = "finished") {
     if (!player?.guildId) return;
     const gid = String(player.guildId);
-    const session = activePlaybackSessions.get(gid);
+    const pbKey = getPlaybackSessionKey(client, gid);
+    const session = activePlaybackSessions.get(pbKey);
     if (!session || session.settled) return;
 
     session.settled = true;
-    activePlaybackSessions.delete(gid);
+    activePlaybackSessions.delete(pbKey);
 
     const now = Date.now();
     const wallElapsed = Math.max(0, now - session.startedAt);
