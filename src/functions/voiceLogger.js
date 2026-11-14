@@ -1,6 +1,7 @@
 const { ChannelType, EmbedBuilder, PermissionsBitField, escapeMarkdown } = require("discord.js");
 const { createDataGuild } = require("./createData.js");
 const Logger = require("../utils/logger");
+const { nativeMessagePayload } = require("./imageMessageRenderer.js");
 
 const COLORS = {
     JOINED: 0x22c55e, // Green
@@ -193,14 +194,14 @@ async function resolveSendableVoiceChat(client, guild, stateChannel, channelId) 
         const requiredPerms = [
             PermissionsBitField.Flags.ViewChannel,
             PermissionsBitField.Flags.SendMessages,
-            PermissionsBitField.Flags.AttachFiles,
+            PermissionsBitField.Flags.EmbedLinks,
             PermissionsBitField.Flags.ReadMessageHistory,
         ];
 
         if (perms && !requiredPerms.every((flag) => perms.has(flag))) {
             warnOnce(
                 `missing_vc_chat_perms_${guild.id}_${channelId}`,
-                `[VoiceLogger] Missing Text-in-Voice permissions (ViewChannel/SendMessages/AttachFiles/ReadMessageHistory) in voice channel "${channel.name}" (${guild.name}).`,
+                `[VoiceLogger] Missing Text-in-Voice permissions (ViewChannel/SendMessages/EmbedLinks/ReadMessageHistory) in voice channel "${channel.name}" (${guild.name}).`,
             );
             return null;
         }
@@ -217,7 +218,6 @@ function buildVoiceActivityEmbed(client, { type, member, user, channelName, time
     const avatarUrl =
         member?.displayAvatarURL?.({ size: 256, forceStatic: false }) ||
         user?.displayAvatarURL?.({ size: 256, forceStatic: false }) ||
-        client.user?.displayAvatarURL?.({ size: 256 }) ||
         null;
 
     const botIconUrl = client.user?.displayAvatarURL?.({ size: 128 }) || avatarUrl;
@@ -260,10 +260,12 @@ async function sendLogToVoiceChannel(client, guild, stateChannel, channelId, pay
             channelName: voiceChannel.name || stateChannel?.name || "Voice Channel",
         });
 
-        await voiceChannel.send({
-            embeds: [embed],
-            allowedMentions: { parse: [] },
-        });
+        await voiceChannel.send(
+            nativeMessagePayload({
+                embeds: [embed],
+                allowedMentions: { parse: [] },
+            }),
+        );
 
         return true;
     } catch (error) {

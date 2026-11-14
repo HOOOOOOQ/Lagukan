@@ -2,7 +2,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const Logger = require("../utils/logger");
-const { brandMark666, ambientDetails666, waveform666, artworkBadge666 } = require("./visualTheme666.js");
+const { backgroundArtwork666, brandMark666, ambientDetails666, waveform666, artworkBadge666 } = require("./visualTheme666.js");
 
 let resvgModule = null;
 let wasmInitPromise = null;
@@ -156,6 +156,23 @@ function truncateText(str = "", maxChars = 32) {
     return `${clean.slice(0, Math.max(1, maxChars - 1)).trim()}…`;
 }
 
+// Scale unusually wide text only when it would cross its allotted column.
+function fitTextAttributes(value, size, width) {
+    const estimated = Array.from(String(value ?? "")).reduce((sum, char) => {
+        const glyphWidth = /[^\u0000-\u024f]/u.test(char)
+            ? 1
+            : /[MW@%]/.test(char)
+              ? 0.95
+              : /[A-Z]/.test(char)
+                ? 0.7
+                : /[ilI1.,:;!'| ]/.test(char)
+                  ? 0.32
+                  : 0.58;
+        return sum + glyphWidth * size;
+    }, 0);
+    return estimated > width ? ` textLength="${width}" lengthAdjust="spacingAndGlyphs"` : "";
+}
+
 function hashState(payload) {
     return crypto.createHash("sha1").update(JSON.stringify(payload)).digest("hex").slice(0, 16);
 }
@@ -237,6 +254,7 @@ function buildSharedDefsAndFrame(width, height) {
         </pattern>
     </defs>
     <rect x="0" y="0" width="${width}" height="${height}" rx="22" fill="url(#bgGrad)"/>
+    <g clip-path="url(#frameClip)">${backgroundArtwork666(width, height, 0.65)}</g>
     <rect x="0" y="0" width="${width}" height="${height}" rx="22" fill="url(#auraTopRight)"/>
     <rect x="0" y="0" width="${width}" height="${height}" rx="22" fill="url(#auraBottomLeft)"/>
     <g clip-path="url(#frameClip)">${ambientDetails666(width, height)}</g>
@@ -246,12 +264,7 @@ function buildSharedDefsAndFrame(width, height) {
 }
 
 function buildLogo666Badge(x, y) {
-    return `
-    <g transform="translate(${x}, ${y})">
-        <rect x="0" y="0" width="88" height="36" rx="10" fill="#1D1019" stroke="url(#neonBorder)" stroke-width="2"/>
-        <circle cx="18" cy="18" r="5" fill="#E53955"/>
-        <text x="52" y="25" text-anchor="middle" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="20" letter-spacing="2">666</text>
-    </g>`;
+    return `<g transform="translate(${x}, ${y})">${brandMark666(0, -5, 46)}<text x="50" y="24" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="10" letter-spacing=".5">MUSIC</text></g>`;
 }
 
 async function renderSvgToPngBuffer(svg, cacheKey, ttlMs = 30_000) {
@@ -335,11 +348,11 @@ async function renderNowPlayingCard666({
         ${coverMarkup}
         ${artworkBadge666(174, 208)}
 
-        <text x="248" y="106" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="26"${title.length > 28 ? ' textLength="530" lengthAdjust="spacingAndGlyphs"' : ""}>${escapeXml(truncateText(title, 33))}</text>
-        <text x="248" y="138" fill="#F4778D" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="17">${escapeXml(truncateText(author, 42))}</text>
+        <text x="248" y="106" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="26"${fitTextAttributes(truncateText(title, 33), 26, 530)}>${escapeXml(truncateText(title, 33))}</text>
+        <text x="248" y="138" fill="#F4778D" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="17"${fitTextAttributes(truncateText(author, 42), 17, 530)}>${escapeXml(truncateText(author, 42))}</text>
 
         <rect x="248" y="156" width="330" height="32" rx="9" fill="#150D13" stroke="#B91F3B" stroke-width="1.2"/>
-        <text x="262" y="177" fill="#B9AAB1" font-family="Inter, DejaVu Sans, sans-serif" font-size="13">REQUESTED BY: <tspan fill="#F5EDF0" font-weight="bold">${escapeXml(truncateText(requester, 22))}</tspan></text>
+        <text x="262" y="177" fill="#B9AAB1" font-family="Inter, DejaVu Sans, sans-serif" font-size="13"${fitTextAttributes(`REQUESTED BY: ${truncateText(requester, 22)}`, 13, 300)}>REQUESTED BY: <tspan fill="#F5EDF0" font-weight="bold">${escapeXml(truncateText(requester, 22))}</tspan></text>
 
         <!-- Neon Progress Bar -->
         <rect x="248" y="210" width="${barWidth}" height="12" rx="6" fill="#1D1019" stroke="#49202F" stroke-width="1"/>
@@ -366,8 +379,14 @@ async function renderLeaderboardCard666({
     callerRank = null,
     callerUsername = "Listener",
 }) {
-    const sig = entries.map((e) => `${e.rank}:${e.userId}:${e.hoursText}:${e.totalPlays}`).join("|");
-    const cacheKey = `lb666:${hashState({ guildId, page, totalPages, callerRank, sig })}`;
+    const sig = entries.map((e) => ({
+        rank: e.rank,
+        userId: e.userId,
+        username: e.username,
+        hoursText: e.hoursText,
+        totalPlays: e.totalPlays,
+    }));
+    const cacheKey = `lb666:${hashState({ guildId, guildName, page, totalPages, callerRank, callerUsername, sig })}`;
     const hit = getBoundedCache(renderedCardCache, cacheKey);
     if (hit) return hit;
 
@@ -420,7 +439,7 @@ async function renderLeaderboardCard666({
                 <circle cx="98" cy="19" r="13" fill="#1D1019" stroke="${rankColor}" stroke-width="1.5"/>
                 <text x="98" y="24" text-anchor="middle" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="12">${initial}</text>
 
-                <text x="122" y="24" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="15">${escapeXml(truncateText(item.username || item.userId, 28))}</text>
+                <text x="122" y="24" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="15"${fitTextAttributes(truncateText(item.username || item.userId, 28), 15, 365)}>${escapeXml(truncateText(item.username || item.userId, 28))}</text>
 
                 <text x="${width - 255}" y="24" text-anchor="end" fill="#F4778D" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="14">${escapeXml(item.hoursText || "0.00")}h</text>
                 <text x="${width - 90}" y="24" text-anchor="end" fill="#B9AAB1" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="14">${Number(item.totalPlays || 0)} Plays</text>
@@ -437,7 +456,7 @@ async function renderLeaderboardCard666({
         ${buildSharedDefsAndFrame(width, height)}
         ${buildLogo666Badge(34, 24)}
         <text x="136" y="45" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="22" letter-spacing="1">MUSIC LEADERBOARD</text>
-        <text x="136" y="67" fill="#B9AAB1" font-family="Inter, DejaVu Sans, sans-serif" font-size="13">${escapeXml(truncateText(guildName, 44))} • TOP ACTIVE LISTENERS</text>
+        <text x="136" y="67" fill="#B9AAB1" font-family="Inter, DejaVu Sans, sans-serif" font-size="13"${fitTextAttributes(`${truncateText(guildName, 44)} • TOP ACTIVE LISTENERS`, 13, 580)}>${escapeXml(truncateText(guildName, 44))} • TOP ACTIVE LISTENERS</text>
 
         <rect x="${width - 156}" y="26" width="122" height="32" rx="10" fill="#1D1019" stroke="#B91F3B" stroke-width="1.3"/>
         <text x="${width - 95}" y="47" text-anchor="middle" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="13">PAGE ${page} / ${totalPages}</text>
@@ -471,6 +490,7 @@ async function renderUserProfileCard666({
 }) {
     const cacheKey = `prof666:${hashState({
         guildId,
+        guildName,
         userId,
         username,
         avatarUrl,
@@ -513,7 +533,7 @@ async function renderUserProfileCard666({
         ${buildSharedDefsAndFrame(width, height)}
         ${buildLogo666Badge(34, 24)}
         <text x="136" y="46" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="22" letter-spacing="1.2">USER MUSIC PROFILE</text>
-        <text x="136" y="67" fill="#B9AAB1" font-family="Inter, DejaVu Sans, sans-serif" font-size="13">${escapeXml(truncateText(guildName, 48))}</text>
+        <text x="136" y="67" fill="#B9AAB1" font-family="Inter, DejaVu Sans, sans-serif" font-size="13"${fitTextAttributes(truncateText(guildName, 48), 13, 560)}>${escapeXml(truncateText(guildName, 48))}</text>
 
         <!-- Music Lover Badge Pill -->
         <rect x="${width - 286}" y="25" width="252" height="34" rx="17" fill="${loverBadgeFill}" stroke="${loverBadgeStroke}" stroke-width="1.6"/>
@@ -522,32 +542,32 @@ async function renderUserProfileCard666({
         ${avatarMarkup}
 
         <!-- Identity Header -->
-        <text x="206" y="118" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="27">${escapeXml(truncateText(username, 26))}</text>
-        <text x="206" y="143" fill="#B9AAB1" font-family="Inter, DejaVu Sans, sans-serif" font-size="14">USER ID: <tspan fill="#F5EDF0" font-weight="bold">${escapeXml(userId)}</tspan>   •   JOIN SERVER: <tspan fill="#F5EDF0" font-weight="bold">${escapeXml(joinServerText)}</tspan></text>
+        <text x="206" y="118" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="27"${fitTextAttributes(truncateText(username, 26), 27, 630)}>${escapeXml(truncateText(username, 26))}</text>
+        <text x="206" y="143" fill="#B9AAB1" font-family="Inter, DejaVu Sans, sans-serif" font-size="14"${fitTextAttributes(`USER ID: ${userId} • JOIN SERVER: ${joinServerText}`, 14, 650)}>USER ID: <tspan fill="#F5EDF0" font-weight="bold">${escapeXml(userId)}</tspan>   •   JOIN SERVER: <tspan fill="#F5EDF0" font-weight="bold">${escapeXml(joinServerText)}</tspan></text>
 
         <!-- 3 Stat Boxes: Total Play | Total Hours | Activity Rank -->
         <g transform="translate(206, 162)">
             <rect x="0" y="0" width="206" height="74" rx="12" fill="#150D13" stroke="#49202F" stroke-width="1.4"/>
             <text x="18" y="26" fill="#786B73" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="12">TOTAL PLAY</text>
-            <text x="18" y="56" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="24">${Number(totalPlays || 0)} Lagu</text>
+            <text x="18" y="56" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="24"${fitTextAttributes(`${Number(totalPlays || 0)} Lagu`, 24, 175)}>${Number(totalPlays || 0)} Lagu</text>
 
             <rect x="224" y="0" width="206" height="74" rx="12" fill="#150D13" stroke="#E53955" stroke-width="1.4"/>
             <text x="242" y="26" fill="#F4778D" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="12">TOTAL HOURS</text>
-            <text x="242" y="56" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="24">${escapeXml(totalHoursText)} Jam</text>
+            <text x="242" y="56" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="24"${fitTextAttributes(`${totalHoursText} Jam`, 24, 175)}>${escapeXml(totalHoursText)} Jam</text>
 
             <rect x="448" y="0" width="212" height="74" rx="12" fill="#150D13" stroke="#B91F3B" stroke-width="1.4"/>
             <text x="466" y="26" fill="#F4778D" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="12">ACTIVITY RANK</text>
-            <text x="466" y="56" fill="#F4778D" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="24">${escapeXml(activityRankText)}</text>
+            <text x="466" y="56" fill="#F4778D" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="24"${fitTextAttributes(activityRankText, 24, 180)}>${escapeXml(activityRankText)}</text>
         </g>
 
         <!-- Favorite Song Box -->
         <rect x="34" y="256" width="${width - 68}" height="54" rx="12" fill="#150D13" stroke="#B91F3B" stroke-width="1.4"/>
         <text x="54" y="278" fill="#F4778D" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="12">FAVORITE SONG (MOST PLAYED)</text>
-        <text x="54" y="299" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="16">${escapeXml(truncateText(favoriteSong, 72))}</text>
+        <text x="54" y="299" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="16"${fitTextAttributes(truncateText(favoriteSong, 72), 16, 780)}>${escapeXml(truncateText(favoriteSong, 72))}</text>
 
         <!-- Achievements Strip -->
         <rect x="34" y="322" width="${width - 68}" height="42" rx="11" fill="#150D13" stroke="#E53955" stroke-width="1.2"/>
-        <text x="54" y="348" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="13">BADGES: <tspan fill="#B9AAB1" font-weight="normal">${escapeXml(extraBadgesText)}</tspan></text>
+        <text x="54" y="348" fill="#F5EDF0" font-family="Inter, DejaVu Sans, sans-serif" font-weight="bold" font-size="13"${fitTextAttributes(`BADGES: ${extraBadgesText}`, 13, 780)}>BADGES: <tspan fill="#B9AAB1" font-weight="normal">${escapeXml(extraBadgesText)}</tspan></text>
     </svg>`;
 
     return renderSvgToPngBuffer(svg, cacheKey, 25_000);
