@@ -22,8 +22,6 @@ const CLIENT_MODEL_BINDINGS = Object.freeze([
     { prop: "userGuildAchievementData", modelName: "UserGuildAchievements" },
     { prop: "musicSession666Data", modelName: "MusicSession666" },
     { prop: "profileNotificationConfigData", modelName: "ProfileNotificationConfig" },
-    { prop: "messageClaimLockData", modelName: "MessageClaimLocks" },
-    { prop: "botGuildPresenceData", modelName: "BotGuildPresence" },
     { prop: "auto247ConfigData", modelName: "Auto247Config" },
 ]);
 

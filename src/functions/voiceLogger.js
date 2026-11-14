@@ -193,14 +193,14 @@ async function resolveSendableVoiceChat(client, guild, stateChannel, channelId) 
         const requiredPerms = [
             PermissionsBitField.Flags.ViewChannel,
             PermissionsBitField.Flags.SendMessages,
-            PermissionsBitField.Flags.EmbedLinks,
+            PermissionsBitField.Flags.AttachFiles,
             PermissionsBitField.Flags.ReadMessageHistory,
         ];
 
         if (perms && !requiredPerms.every((flag) => perms.has(flag))) {
             warnOnce(
                 `missing_vc_chat_perms_${guild.id}_${channelId}`,
-                `[VoiceLogger] Missing Text-in-Voice permissions (ViewChannel/SendMessages/EmbedLinks/ReadMessageHistory) in voice channel "${channel.name}" (${guild.name}).`,
+                `[VoiceLogger] Missing Text-in-Voice permissions (ViewChannel/SendMessages/AttachFiles/ReadMessageHistory) in voice channel "${channel.name}" (${guild.name}).`,
             );
             return null;
         }

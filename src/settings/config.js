@@ -30,7 +30,7 @@ module.exports = {
     lavalinkSource: process.env.LAVALINK_SOURCE || "sp", // Available Lavalink sources, based on the sources you've enabled in your Lavalink configuration. For example, if you enable the Spotify source, then "sp" will refer to "spsearch". Will be used if "sourceID" option is provided in the play command.
     rainlinkOptions: {
         resume: true, // whether to resume the player after restart
-        resumeTimeout: 5000, // 5 seconds
+        resumeTimeout: 60, // Lavalink v4 uses seconds
         retryTimeout: 5000, // 5 seconds
         retryCount: Infinity, // infinity or number
         defaultSearchEngine: process.env.DEFAULT_SEARCH_ENGINE || "youtubeMusic", // default search engine. Available engines: youtubeMusic, youtube,& soundcloud.

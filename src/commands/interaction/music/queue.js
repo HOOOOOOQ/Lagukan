@@ -4,7 +4,7 @@ const { convertTime } = require("../../../functions/timeFormat.js");
 const { formatTrackSourceLabel } = require("../../../functions/musicSourceResolver.js");
 const { checkDjAccess, isGuildAutoplayEnabled } = require("../../../functions/musicPermissions.js");
 const { refreshNowPlayingDashboard, formatRepeatLabel, truncateText } = require("../../../functions/nowPlayingManager.js");
-const { safeReply } = require("../../../functions/interactionResponder.js");
+const { safeReply, safeDeferReply } = require("../../../functions/interactionResponder.js");
 const lodash = require("lodash");
 
 module.exports = {
@@ -73,6 +73,7 @@ module.exports = {
                 return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
             }
 
+            if (!(await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral }))) return;
             if (skipTo !== null) {
                 if (player.queue.isEmpty || skipTo < 1 || skipTo > player.queue.size) {
                     embed.setDescription(
@@ -84,10 +85,13 @@ module.exports = {
                 }
 
                 const targetTrack = player.queue[skipTo - 1];
-                if (skipTo > 1) {
-                    player.queue.splice(0, skipTo - 1);
+                const removedTracks = skipTo > 1 ? player.queue.splice(0, skipTo - 1) : [];
+                try {
+                    await Promise.resolve(player.skip());
+                } catch (error) {
+                    if (removedTracks.length) player.queue.unshift(...removedTracks);
+                    throw error;
                 }
-                await Promise.resolve(player.skip());
 
                 embed.setDescription(`⏭️ Skipped to position \`#${skipTo}\`: **${truncateText(targetTrack?.title, 50)}**.`);
                 return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });

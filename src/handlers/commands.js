@@ -157,37 +157,6 @@ module.exports = (client) => {
     } catch (error) {
         Logger.error("Failed to load slash commands:", error);
     }
-
-    try {
-        const messageRoot = path.join(__dirname, "../commands/message");
-
-        readdirSync(messageRoot)
-            .sort()
-            .forEach((dir) => {
-                const dirPath = path.join(messageRoot, dir);
-                const commands = readdirSync(dirPath)
-                    .filter((file) => file.endsWith(".js"))
-                    .sort();
-
-                for (const file of commands) {
-                    const command = require(path.join(dirPath, file));
-
-                    if (command.name) {
-                        client.prefix.set(command.name, command);
-                    } else {
-                        continue;
-                    }
-
-                    if (command.aliases && Array.isArray(command.aliases)) {
-                        command.aliases.map((alias) => client.aliases.set(alias, command.name));
-                    }
-                }
-            });
-
-        Logger.info(`${client.prefix.size} Prefix commands loaded`);
-    } catch (error) {
-        Logger.error("Failed to load prefix commands:", error);
-    }
 };
 
 /**

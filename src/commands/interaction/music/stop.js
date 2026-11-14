@@ -1,6 +1,6 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
 const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
-const { safeReply } = require("../../../functions/interactionResponder.js");
+const { safeReply, safeDeferReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "stop",
@@ -18,11 +18,17 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
+        if (!(await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral }))) return;
+        const previousStopAt = player._manualStopAt;
         player._manualStopAt = Date.now();
+        try {
+            await Promise.resolve(player.stop());
+        } catch (error) {
+            player._manualStopAt = previousStopAt;
+            throw error;
+        }
         await cleanupNowPlayingMessage(player, true);
-        player.queue.clear();
         player.data?.set?.("shuffled", false);
-        await Promise.resolve(player.stop());
 
         const embed = new EmbedBuilder()
             .setColor(client.config.embedColor)

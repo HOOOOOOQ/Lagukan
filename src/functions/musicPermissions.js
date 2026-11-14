@@ -12,7 +12,7 @@ const MAX_FAVORITES_PER_USER = 100;
 const MAX_PLAYLISTS_PER_OWNER = 25;
 const MAX_TRACKS_PER_PLAYLIST = 300;
 
-const guildPlayerCreationLocks = new Map();
+const guildPlayerCreationLocks = new WeakMap();
 
 function ensureGuildDataSync(client, guildOrId) {
     const guildId = typeof guildOrId === "string" ? guildOrId : guildOrId?.id;
@@ -207,8 +207,16 @@ async function getOrCreateGuildPlayer(client, options = {}) {
     }
 
     const gId = String(guild.id);
-    if (guildPlayerCreationLocks.has(gId)) {
-        return guildPlayerCreationLocks.get(gId);
+    let locks = guildPlayerCreationLocks.get(client);
+    if (!locks) {
+        locks = new Map();
+        guildPlayerCreationLocks.set(client, locks);
+    }
+    if (locks.has(gId)) {
+        const pending = locks.get(gId);
+        if (pending.voiceChannelId !== String(voiceChannelId))
+            throw new Error("A voice connection is already being created in another channel.");
+        return pending.task;
     }
 
     const task = (async () => {
@@ -248,11 +256,11 @@ async function getOrCreateGuildPlayer(client, options = {}) {
         return registered;
     })();
 
-    guildPlayerCreationLocks.set(gId, task);
+    locks.set(gId, { task, voiceChannelId: String(voiceChannelId) });
     try {
         return await task;
     } finally {
-        guildPlayerCreationLocks.delete(gId);
+        locks.delete(gId);
     }
 }
 

@@ -1,4 +1,12 @@
-const { RainlinkConnectState, RainlinkVoice, RainlinkPlayer, RainlinkWebsocket, RainlinkTrack, Lavalink4 } = require("rainlink");
+const {
+    RainlinkConnectState,
+    RainlinkVoice,
+    RainlinkPlayer,
+    RainlinkWebsocket,
+    RainlinkTrack,
+    RainlinkNode,
+    Lavalink4,
+} = require("rainlink");
 const Logger = require("../utils/logger");
 
 const NODE_STATE_CONNECTED = RainlinkConnectState?.Connected ?? 0;
@@ -45,11 +53,12 @@ function isLavalinkDaveCapable(versionStr) {
 
 function syncNodeRestSession(node) {
     if (!node) return null;
+    if (node.state !== NODE_STATE_CONNECTED || node._lagukanInvalidSession) return null;
     const driverSession = node.driver?.sessionId || null;
     if (driverSession && node.rest && node.rest.sessionId !== driverSession) {
         node.rest.sessionId = driverSession;
     }
-    return driverSession || node.rest?.sessionId || null;
+    return driverSession;
 }
 
 /**
@@ -58,6 +67,7 @@ function syncNodeRestSession(node) {
  */
 async function waitForNodeSessionReady(node, timeoutMs = 5000) {
     if (!node) return false;
+    if (node.state !== NODE_STATE_CONNECTED || node.sudoDisconnect) return false;
     if (syncNodeRestSession(node)) return true;
     // Allow custom test/mock drivers that do not use Lavalink4 WebSocket session handshakes
     if (!node.driver || !("sessionId" in node.driver)) return true;
@@ -90,6 +100,47 @@ async function waitForNodeSessionReady(node, timeoutMs = 5000) {
 function patchRainlinkRuntime() {
     if (rainlinkPrototypesPatched) return;
     rainlinkPrototypesPatched = true;
+
+    // Clear old session before Rainlink emits nodeDisconnect; only a new ready frame can unblock REST.
+    if (RainlinkNode?.prototype && !RainlinkNode.prototype._lagukanSessionPatched) {
+        RainlinkNode.prototype._lagukanSessionPatched = true;
+        const originalOpen = RainlinkNode.prototype.wsOpenEvent;
+        RainlinkNode.prototype.wsOpenEvent = function (...args) {
+            const retries = this.retryCounter;
+            const result = originalOpen.apply(this, args);
+            this.retryCounter = retries;
+            this._lagukanOpenAt = Date.now();
+            return result;
+        };
+        RainlinkNode.prototype.wsCloseEvent = function (code, reason) {
+            if (this._lagukanReconnectTimer) return;
+            require("./sessionRecoveryManager.js").invalidateSession(this);
+            this.online = false;
+            this.state = NODE_STATE_DISCONNECTED;
+            this.manager.emit("nodeDisconnect", this, code, reason);
+            if (this.sudoDisconnect) {
+                this.state = NODE_STATE_CLOSED;
+                return;
+            }
+            if (this._lagukanOpenAt && Date.now() - this._lagukanOpenAt >= 30000) this.retryCounter = 0;
+            const options = this.manager.rainlinkOptions.options;
+            const limit = clampInt(options.retryCount, 1, 50, 10);
+            if (this.retryCounter >= limit) return this.nodeClosed();
+            const base = clampInt(options.retryTimeout, 100, 60000, 5000);
+            const delay = Math.min(60000, base * 2 ** Math.min(this.retryCounter, 8));
+            this.retryCounter += 1;
+            this._lagukanReconnectTimer = setTimeout(() => {
+                this._lagukanReconnectTimer = null;
+                if (!this.sudoDisconnect && this.state === NODE_STATE_DISCONNECTED) this.reconnect(true);
+            }, delay);
+            this._lagukanReconnectTimer.unref?.();
+        };
+        const originalMessage = RainlinkNode.prototype.wsMessageEvent;
+        RainlinkNode.prototype.wsMessageEvent = function (data) {
+            if (data?.op === "ready" && data.sessionId) this._lagukanInvalidSession = false;
+            return originalMessage.call(this, data);
+        };
+    }
 
     // 0. RFC-6455 compliant WebSocket transport & live/direct stream playability
     if (RainlinkWebsocket?.prototype && !RainlinkWebsocket.prototype._lagukanWsPatched) {
@@ -246,6 +297,16 @@ function patchRainlinkRuntime() {
             await this.node.rest.updatePlayer(playerUpdate);
         };
 
+        // Rainlink 1.2.9 clears the queue before the REST request, losing it on a failed stop.
+        RainlinkPlayer.prototype.stop = async function patchedStop(destroy) {
+            this.checkDestroyed();
+            if (destroy) return this.destroy();
+            await this.node.rest.updatePlayer({ guildId: this.guildId, playerOptions: { track: { encoded: null } } });
+            this.clear(false);
+            this.manager.emit("trackEnd", this, this.queue.current);
+            return this;
+        };
+
         const origPlay = RainlinkPlayer.prototype.play;
         RainlinkPlayer.prototype.play = async function patchedPlay(track, options) {
             this._manualStopAt = 0;
@@ -283,10 +344,15 @@ function patchRainlinkRuntime() {
         Lavalink4.prototype._lagukanRequesterPatched = true;
 
         Lavalink4.prototype.requester = async function patchedLavalink4Requester(options) {
-            if (options.path.includes("/sessions") && this.sessionId == null) {
-                throw new Error("Lavalink sessionId is not initialized yet. Waiting for node ready handshake.");
+            if (options.path.includes("/sessions/")) {
+                if (!(await waitForNodeSessionReady(this.node, 4000))) {
+                    throw new Error("Lavalink is reconnecting; session is not ready.");
+                }
+                // RainlinkRest may have constructed its path before the ready frame replaced it.
+                options = { ...options, path: options.path.replace(/\/sessions\/[^/]*/, `/sessions/${this.sessionId}`) };
             }
 
+            const requestSession = this.sessionId;
             const url = new URL(`${this.httpUrl}${options.path}`);
             if (options.params) url.search = new URLSearchParams(options.params).toString();
             if (options.data) {
@@ -301,6 +367,7 @@ function patchRainlinkRuntime() {
             const fetchOptions = {
                 ...options,
                 headers: lavalinkHeaders,
+                signal: options.signal || AbortSignal.timeout(10000),
             };
 
             if (options.path === "/decodetrack") {
@@ -310,9 +377,10 @@ function patchRainlinkRuntime() {
 
             const res = await fetch(url, fetchOptions);
             const method = options.method || "GET";
+            const safePath = url.pathname.replace(/\/sessions\/[^/]+/, "/sessions/[redacted]");
 
             if (res.status === 204) {
-                this.debug(`${method} ${url.pathname + url.search} status=204`);
+                this.debug(`${method} ${safePath} status=204`);
                 return undefined;
             }
 
@@ -332,8 +400,12 @@ function patchRainlinkRuntime() {
                     // Ignore body parse failure
                 }
 
+                if (res.status === 404 && options.path.includes("/sessions/") && /session not found/i.test(errorDetail)) {
+                    require("./sessionRecoveryManager.js").sessionExpired(this.node, requestSession);
+                }
+
                 // Never log authorization headers
-                this.debug(`${method} ${options.path} failed (${res.status}): ${Logger.sanitize(errorDetail)}`);
+                this.debug(`${method} ${safePath} failed (${res.status}): ${Logger.sanitize(errorDetail)}`);
 
                 const isSessionPlayerMutation =
                     options.path.includes("/sessions/") && options.path.includes("/players/") && (method === "PATCH" || method === "POST");
@@ -355,7 +427,7 @@ function patchRainlinkRuntime() {
             }
 
             const finalData = await res.json();
-            this.debug(`${method} ${url.pathname + url.search} status=200`);
+            this.debug(`${method} ${safePath} status=200`);
             return finalData;
         };
     }
@@ -381,7 +453,7 @@ function scoreNodeHealth(node) {
     const frameDeficit = Math.max(0, Number(stats.frameStats?.deficit || 0));
     const frameNulled = Math.max(0, Number(stats.frameStats?.nulled || 0));
 
-    const metrics = nodeHealthMetrics.get(getNodeKey(node));
+    const metrics = nodeHealthMetrics.get(node);
     const recentErrors = Number(metrics?.recentErrors || 0);
     const missingSessionPenalty = node.driver && "sessionId" in node.driver && !node.driver.sessionId ? 500 : 0;
 
@@ -413,7 +485,7 @@ async function selectHealthyNode(nodes) {
     const scored = connected.map((node) => ({ node, score: scoreNodeHealth(node) })).sort((a, b) => a.score - b.score);
     const chosen = scored[0]?.node;
     if (chosen) {
-        await waitForNodeSessionReady(chosen, 4000);
+        if (!(await waitForNodeSessionReady(chosen, 4000))) return undefined;
     }
     return chosen;
 }
@@ -426,7 +498,7 @@ async function fetchNodeCapabilities(node, force = false) {
     if (!node || node.state !== NODE_STATE_CONNECTED) return null;
 
     const key = getNodeKey(node);
-    const existing = nodeCapabilitiesCache.get(key);
+    const existing = nodeCapabilitiesCache.get(node);
     if (existing && !force && Date.now() - existing.fetchedAt < 10 * 60 * 1000) {
         return existing;
     }
@@ -462,10 +534,10 @@ async function fetchNodeCapabilities(node, force = false) {
             fetchedAt: Date.now(),
         };
 
-        nodeCapabilitiesCache.set(key, normalized);
+        nodeCapabilitiesCache.set(node, normalized);
 
-        if (daveCapable === false && !daveWarnedNodes.has(key)) {
-            daveWarnedNodes.add(key);
+        if (daveCapable === false && !daveWarnedNodes.has(node)) {
+            daveWarnedNodes.add(node);
             Logger.warn(
                 `[NodeHealth] Node Lavalink '${key}' menjalankan versi lama (v${versionStr} < 4.2.0 tanpa libdave). Discord mewajibkan enkripsi suara DAVE E2EE — perbarui server Lavalink ke v4.2.2+ jika bot masuk voice tanpa suara atau terputus dengan kode 4017.`,
             );
@@ -480,7 +552,7 @@ async function fetchNodeCapabilities(node, force = false) {
 
 function getCachedNodeCapabilities(node) {
     if (!node) return null;
-    return nodeCapabilitiesCache.get(getNodeKey(node)) || null;
+    return nodeCapabilitiesCache.get(node) || null;
 }
 
 function getAnyConnectedNode(client) {
@@ -506,7 +578,7 @@ function nodeSupportsFilter(node, filterKey) {
 
 function recordNodeEvent(node, eventType, detail = null) {
     const key = getNodeKey(node);
-    const current = nodeHealthMetrics.get(key) || {
+    const current = nodeHealthMetrics.get(node) || {
         connects: 0,
         disconnects: 0,
         errors: 0,
@@ -520,7 +592,6 @@ function recordNodeEvent(node, eventType, detail = null) {
     if (eventType === "connect") {
         current.connects += 1;
         current.recentErrors = 0;
-        current.recoveryAttempts = 0;
         current.lastConnectedAt = Date.now();
     } else if (eventType === "disconnect") {
         current.disconnects += 1;
@@ -533,7 +604,7 @@ function recordNodeEvent(node, eventType, detail = null) {
         current.lastDisconnectedAt = Date.now();
     }
 
-    nodeHealthMetrics.set(key, current);
+    nodeHealthMetrics.set(node, current);
     return current;
 }
 
@@ -549,8 +620,8 @@ function getNodeHealthSummary(client) {
             retryCounter: node.retryCounter || 0,
             score: scoreNodeHealth(node),
             stats: node.stats || {},
-            capabilities: nodeCapabilitiesCache.get(key) || null,
-            metrics: nodeHealthMetrics.get(key) || null,
+            capabilities: nodeCapabilitiesCache.get(node) || null,
+            metrics: nodeHealthMetrics.get(node) || null,
         };
     });
 }
@@ -559,8 +630,8 @@ function getNodeHealthSummary(client) {
  * Circuit breaker for consecutive track exceptions / resolve failures in a guild
  * so broken queues never trigger infinite skip loops.
  */
-function recordPlaybackFailure(guildId) {
-    const gId = String(guildId || "");
+function recordPlaybackFailure(guildId, botId = "default") {
+    const gId = `${botId}:${String(guildId || "")}`;
     if (!gId) return { count: 1, tripped: false };
 
     const now = Date.now();
@@ -575,9 +646,9 @@ function recordPlaybackFailure(guildId) {
     };
 }
 
-function resetPlaybackFailure(guildId) {
+function resetPlaybackFailure(guildId, botId = "default") {
     if (!guildId) return;
-    guildPlaybackFailures.delete(String(guildId));
+    guildPlaybackFailures.delete(`${botId}:${String(guildId)}`);
 }
 
 function patchClientLibrarySendPacket(client) {
@@ -615,6 +686,60 @@ function patchClientLibrarySendPacket(client) {
     };
 }
 
+// Rainlink registers its player only after an async voice handshake. Serialize every create
+// path on this Rainlink instance (including /play and automatic 24/7), not across bots.
+function installPlayerCreationGuard(client) {
+    const rainlink = client?.rainlink;
+    if (!rainlink || rainlink._lagukanCreateGuard || typeof rainlink.create !== "function") return;
+    rainlink._lagukanCreateGuard = true;
+    const original = rainlink.create.bind(rainlink);
+    const inflight = new Map();
+    rainlink._lagukanCreateInFlight = inflight;
+    rainlink.create = async (options) => {
+        const guildId = String(options?.guildId || "");
+        if (!guildId) return original(options);
+        const pending = inflight.get(guildId);
+        if (pending) {
+            if (pending.voiceId !== String(options.voiceId || ""))
+                throw new Error("A voice connection is already being created in another channel.");
+            return pending.task;
+        }
+        const priorPlayer = rainlink.players?.get?.(guildId);
+        const priorVoice = rainlink.voices?.get?.(guildId);
+        const task = Promise.resolve()
+            .then(() => original(options))
+            .catch(async (error) => {
+                // Rainlink registers a state=DESTROYED player before its initial REST update.
+                // A failed update can otherwise leave Discord voice and a zombie player behind.
+                const player = rainlink.players?.get?.(guildId);
+                const incomplete = !player || (player !== priorPlayer && player.state === 2);
+                if (!priorPlayer && incomplete) {
+                    if (player && rainlink.players?.get?.(guildId) === player) {
+                        rainlink.players.delete(guildId);
+                        const snapshots = player.node?._lagukanSnapshots;
+                        if (snapshots?.get(guildId)?.player === player) snapshots.delete(guildId);
+                    }
+                    const voice = rainlink.voices?.get?.(guildId);
+                    if (voice && voice !== priorVoice && rainlink.voices?.get?.(guildId) === voice) {
+                        try {
+                            await Promise.resolve(voice.disconnect?.());
+                        } catch (cleanupError) {
+                            Logger.warn(`[PlayerCreate] Voice cleanup failed for guild ${guildId}: ${Logger.sanitize(cleanupError)}`);
+                        }
+                        if (rainlink.voices?.get?.(guildId) === voice) rainlink.voices.delete(guildId);
+                    }
+                }
+                throw error;
+            });
+        inflight.set(guildId, { task, voiceId: String(options.voiceId || "") });
+        try {
+            return await task;
+        } finally {
+            if (inflight.get(guildId)?.task === task) inflight.delete(guildId);
+        }
+    };
+}
+
 /**
  * Applies bounded reconnect limits, healthy node selection, Rainlink voice/REST hardening,
  * and periodic closed-node recovery at runtime without modifying `src/settings/config.js`.
@@ -626,6 +751,7 @@ function initializeNodeHealthManager(client) {
     client._nodeHealthInitialized = true;
 
     patchClientLibrarySendPacket(client);
+    installPlayerCreationGuard(client);
 
     const maxRetries = clampInt(process.env.LAVALINK_RETRY_COUNT, 1, 50, 10);
     const retryTimeout = clampInt(process.env.LAVALINK_RETRY_TIMEOUT, 2000, 60000, 5000);
@@ -649,7 +775,8 @@ function initializeNodeHealthManager(client) {
 
                 if (node.state === NODE_STATE_CONNECTED) {
                     syncNodeRestSession(node);
-                    const m = nodeHealthMetrics.get(getNodeKey(node));
+                    const m = nodeHealthMetrics.get(node);
+                    if (m && m.lastConnectedAt && Date.now() - m.lastConnectedAt >= 60000) m.recoveryAttempts = 0;
                     if (m && m.recentErrors > 0) {
                         m.recentErrors = Math.max(0, m.recentErrors - 1);
                     }
@@ -658,12 +785,12 @@ function initializeNodeHealthManager(client) {
 
                 if (node.state === NODE_STATE_CLOSED) {
                     const key = getNodeKey(node);
-                    const metrics = nodeHealthMetrics.get(key) || recordNodeEvent(node, "closed");
+                    const metrics = nodeHealthMetrics.get(node) || recordNodeEvent(node, "closed");
                     if (metrics.recoveryAttempts >= maxCooldownRecoveries) {
                         continue;
                     }
                     metrics.recoveryAttempts += 1;
-                    nodeHealthMetrics.set(key, metrics);
+                    nodeHealthMetrics.set(node, metrics);
 
                     Logger.warn(
                         `[NodeHealth] Mencoba pemulihan berkala (${metrics.recoveryAttempts}/${maxCooldownRecoveries}) untuk node tertutup ${key}...`,
@@ -707,6 +834,7 @@ module.exports = {
     recordPlaybackFailure,
     resetPlaybackFailure,
     initializeNodeHealthManager,
+    installPlayerCreationGuard,
 };
 
 /**

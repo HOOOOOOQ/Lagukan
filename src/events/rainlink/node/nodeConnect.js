@@ -1,6 +1,8 @@
 const { recordNodeEvent, fetchNodeCapabilities } = require("../../../functions/nodeHealthManager.js");
 const { syncAllAuto247OnStartup } = require("../../../functions/auto247Manager.js");
 const { tryAutoResumeGuildPlayback } = require("../../../functions/radioAndSleepManager.js");
+const { recoverNodePlayers, invalidateSession } = require("../../../functions/sessionRecoveryManager.js");
+const { waitForNodeSessionReady } = require("../../../functions/nodeHealthManager.js");
 const Logger = require("../../../utils/logger");
 
 module.exports = async (client, node) => {
@@ -18,6 +20,19 @@ module.exports = async (client, node) => {
                 }
             })
             .catch(() => {});
+
+        // nodeConnect is the WebSocket open event, not the Lavalink ready handshake.
+        if (!(await waitForNodeSessionReady(node, 10000))) {
+            Logger.warn(`[NodeConnect] Lavalink ready handshake timed out on ${nodeName}.`);
+            invalidateSession(node);
+            try {
+                node.driver?.wsClient?.close?.(4000, "Ready handshake timeout");
+            } catch (err) {
+                Logger.warn(`[NodeConnect] Could not close stalled socket: ${err.message}`);
+            }
+            return;
+        }
+        await recoverNodePlayers(client, node);
 
         // Automatically connect this bot (`botApplicationId`) to all its configured 24/7 voice channels
         const connectedList = await syncAllAuto247OnStartup(client, node);

@@ -13,7 +13,7 @@ const Logger = require("../../../utils/logger");
 module.exports = async (client, player, track) => {
     if (!player || player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy || !track) return;
 
-    resetPlaybackFailure(player.guildId);
+    resetPlaybackFailure(player.guildId, client.user?.id);
 
     const isGuessTheSong = Boolean(player.data?.get?.("guessTheSongActive"));
     if (!isGuessTheSong) {

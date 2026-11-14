@@ -21,8 +21,6 @@ const ALLOWED_MODELS = new Set([
     "UserGuildAchievements",
     "MusicSession666",
     "ProfileNotificationConfig",
-    "MessageClaimLocks",
-    "BotGuildPresence",
     "Auto247Config",
 ]);
 

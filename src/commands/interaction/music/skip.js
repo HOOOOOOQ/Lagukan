@@ -1,7 +1,7 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
 const { isGuildAutoplayEnabled, checkDjAccess } = require("../../../functions/musicPermissions.js");
 const { truncateText } = require("../../../functions/nowPlayingManager.js");
-const { safeReply } = require("../../../functions/interactionResponder.js");
+const { safeReply, safeDeferReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "skip",
@@ -29,6 +29,7 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
+        if (!(await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral }))) return;
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
         const jumpTo = interaction.options.getInteger("to");
 
@@ -57,10 +58,13 @@ module.exports = {
             }
 
             const target = player.queue[jumpTo - 1];
-            if (jumpTo > 1) {
-                player.queue.splice(0, jumpTo - 1);
+            const removedTracks = jumpTo > 1 ? player.queue.splice(0, jumpTo - 1) : [];
+            try {
+                await Promise.resolve(player.skip());
+            } catch (error) {
+                if (removedTracks.length) player.queue.unshift(...removedTracks);
+                throw error;
             }
-            await Promise.resolve(player.skip());
 
             embed.setDescription(`⏭️ Skipped to \`#${jumpTo}\`: **${truncateText(target?.title, 50)}**.`);
             return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
