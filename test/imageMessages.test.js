@@ -247,6 +247,301 @@ test("dashboard refresh updates playback snapshot while retaining unrelated file
     assert.notDeepEqual(calls[0].files[0].attachment, calls[1].files[0].attachment);
     const converted = await toImagePayload(calls[0], { edit: true, message });
     assert.deepEqual(converted.attachments, [{ id: "2" }]);
-    assert.equal(converted.files[0].name, "666-nowplaying.png");
+    assert.equal(converted.files.length, 1);
+    assert.equal(converted.files[0].name, "lagukan-response-1.png");
+    assert.match(converted.files[0].description, /Song/);
+    assert.match(converted.files[0].description, /Elapsed \/ Remaining/);
     assert.ok(converted.components.length > 0);
+});
+
+test("joined and leaving use the member avatar and preserve voice details", async () => {
+    const { buildVoiceActivityEmbed } = require("../src/functions/voiceLogger.js");
+    const { renderSvgToPngBuffer } = require("../src/functions/cardRenderer666.js");
+    const red = await renderSvgToPngBuffer(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" fill="red"/></svg>',
+    );
+    const blue = await renderSvgToPngBuffer(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"><rect width="24" height="24" fill="blue"/></svg>',
+    );
+    const previous = global.fetch;
+    const calls = [];
+    global.fetch = async (url, options) => {
+        calls.push({ url: String(url), options });
+        const image = String(url).includes("hashred") ? red : blue;
+        return {
+            ok: true,
+            headers: new Headers({ "content-type": "image/png" }),
+            body: (async function* () {
+                yield image;
+            })(),
+        };
+    };
+    try {
+        const makeEmbed = (type, hash) =>
+            buildVoiceActivityEmbed(
+                { user: { displayAvatarURL: () => "https://cdn.discordapp.com/avatars/1/bot.png" } },
+                {
+                    type,
+                    user: { id: "123456789012345678", username: "listener" },
+                    member: {
+                        displayAvatarURL: (options) => {
+                            assert.equal(options.forceStatic, false);
+                            return `https://cdn.discordapp.com/guilds/42/users/123456789012345678/avatars/${hash}.webp?size=1024`;
+                        },
+                    },
+                    channelName: "Music Lounge",
+                    timeString: "17:24 WIB",
+                },
+            ).setTimestamp(new Date("2026-01-01T00:00:00Z"));
+        for (const type of ["JOINED", "LEAVING"]) {
+            const first = await toImagePayload({ embeds: [makeEmbed(type, "hashred")] });
+            const second = await toImagePayload({ embeds: [makeEmbed(type, "hashblue")] });
+            assert.notDeepEqual(first.files[0].attachment, second.files[0].attachment);
+            assert.match(first.files[0].description, /123456789012345678/);
+            assert.match(first.files[0].description, /@listener/);
+            assert.match(first.files[0].description, /Music Lounge/);
+            assert.match(first.files[0].description, /2026-01-01T00:00:00.000Z/);
+        }
+        assert.equal(calls.length, 2, "avatar cache is reused for join and leave");
+        assert.equal(calls[0].url, "https://cdn.discordapp.com/guilds/42/users/123456789012345678/avatars/hashred.png?size=256");
+        assert.equal(calls[0].options.redirect, "error");
+    } finally {
+        global.fetch = previous;
+    }
+});
+
+test("untrusted or missing avatars use the generic user icon, never the bot avatar", async () => {
+    const { buildVoiceActivityEmbed } = require("../src/functions/voiceLogger.js");
+    const previous = global.fetch;
+    let calls = 0;
+    global.fetch = async () => {
+        calls++;
+        throw new Error("unexpected fetch");
+    };
+    try {
+        const args = {
+            type: "JOINED",
+            user: { id: "123456789012345678", username: "listener" },
+            channelName: "Music Lounge",
+            timeString: "17:24 WIB",
+        };
+        const client = { user: { displayAvatarURL: () => "https://cdn.discordapp.com/avatars/1/bot.png" } };
+        const noAvatar = buildVoiceActivityEmbed(client, args).setTimestamp(new Date("2026-01-01T00:00:00Z"));
+        assert.equal(noAvatar.toJSON().thumbnail, undefined);
+        const baseline = await toImagePayload({ embeds: [noAvatar] });
+        const untrusted = buildVoiceActivityEmbed(client, args)
+            .setThumbnail("https://example.com/avatar.png")
+            .setTimestamp(new Date("2026-01-01T00:00:00Z"));
+        const rejected = await toImagePayload({ embeds: [untrusted] });
+        assert.deepEqual(rejected.files[0].attachment, baseline.files[0].attachment);
+        assert.equal(calls, 0);
+    } finally {
+        global.fetch = previous;
+    }
+});
+
+test("default Discord avatars and long voice text render without dropping information", async () => {
+    const { buildVoiceActivityEmbed } = require("../src/functions/voiceLogger.js");
+    const { renderSvgToPngBuffer } = require("../src/functions/cardRenderer666.js");
+    const image = await renderSvgToPngBuffer(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>',
+    );
+    const previous = global.fetch;
+    let fetched;
+    global.fetch = async (url) => {
+        fetched = String(url);
+        return {
+            ok: true,
+            headers: new Headers({ "content-type": "image/png" }),
+            body: (async function* () {
+                yield image;
+            })(),
+        };
+    };
+    try {
+        const embed = buildVoiceActivityEmbed(
+            { user: {} },
+            {
+                type: "LEAVING",
+                user: {
+                    id: "123456789012345678",
+                    username: "listener",
+                    displayAvatarURL: () => "https://cdn.discordapp.com/embed/avatars/3.png",
+                },
+                channelName: "A".repeat(100),
+                timeString: "17:24 WIB",
+            },
+        );
+        const result = await toImagePayload({ embeds: [embed] });
+        assert.equal(fetched, "https://cdn.discordapp.com/embed/avatars/3.png?size=256");
+        assert.match(result.files[0].description, /A{30}/);
+        assert.ok(result.files[0].attachment.readUInt32BE(20) > 330, "long content uses paginated fallback with the avatar");
+    } finally {
+        global.fetch = previous;
+    }
+});
+
+test("failed or oversized Discord avatar responses fall back safely", async () => {
+    const { buildVoiceActivityEmbed } = require("../src/functions/voiceLogger.js");
+    const previous = global.fetch;
+    let calls = 0;
+    global.fetch = async () => {
+        calls++;
+        return {
+            ok: true,
+            headers: new Headers({ "content-type": "image/png", "content-length": "524289" }),
+            body: (async function* () {
+                throw new Error("must not read oversized image");
+            })(),
+        };
+    };
+    try {
+        const args = {
+            type: "LEAVING",
+            user: { id: "123456789012345678", username: "listener" },
+            channelName: "Music Lounge",
+            timeString: "17:24 WIB",
+        };
+        const client = { user: {} };
+        const empty = buildVoiceActivityEmbed(client, args).setTimestamp(new Date("2026-01-01T00:00:00Z"));
+        const baseline = await toImagePayload({ embeds: [empty] });
+        const large = buildVoiceActivityEmbed(client, args)
+            .setThumbnail("https://cdn.discordapp.com/avatars/123456789012345678/oversized.png")
+            .setTimestamp(new Date("2026-01-01T00:00:00Z"));
+        const result = await toImagePayload({ embeds: [large] });
+        assert.deepEqual(result.files[0].attachment, baseline.files[0].attachment);
+        assert.equal(calls, 1);
+        const wrongPath = buildVoiceActivityEmbed(client, args)
+            .setThumbnail("https://cdn.discordapp.com/icons/1/icon.png")
+            .setTimestamp(new Date("2026-01-01T00:00:00Z"));
+        const rejected = await toImagePayload({ embeds: [wrongPath] });
+        assert.deepEqual(rejected.files[0].attachment, baseline.files[0].attachment);
+        assert.equal(calls, 1);
+    } finally {
+        global.fetch = previous;
+    }
+});
+
+test("long queue titles and artists retain the structured card without losing metadata", async () => {
+    const embed = new EmbedBuilder()
+        .setAuthor({ name: "Added to Queue" })
+        .setDescription(
+            "**[A beautiful song with a very long title for a beautiful afternoon](https://example.com/song)**\nby **A wonderful artist featuring a very special guest**",
+        )
+        .addFields({ name: "Duration", value: "03:42" }, { name: "Source", value: "Spotify" }, { name: "Queue Position", value: "#3" });
+    const result = await toImagePayload({ embeds: [embed] });
+    assert.equal(result.files.length, 1);
+    assert.ok(result.files[0].attachment.readUInt32BE(20) > 354);
+    assert.match(result.files[0].description, /beautiful\s+afternoon/);
+    assert.match(result.files[0].description, /special guest/);
+    assert.match(result.files[0].description, /Spotify/);
+    assert.match(result.files[0].description, /Queue Position\n#3/);
+});
+
+test("profile and leaderboard cards reflect current names even when stats are unchanged", async () => {
+    const { renderLeaderboardCard666, renderUserProfileCard666 } = require("../src/functions/cardRenderer666.js");
+    const entry = { rank: 1, userId: "123", username: "Before", hoursText: "1.00", totalPlays: 2 };
+    const firstLeaderboard = await renderLeaderboardCard666({ guildId: "cache-test", guildName: "Guild", entries: [entry] });
+    const secondLeaderboard = await renderLeaderboardCard666({
+        guildId: "cache-test",
+        guildName: "Guild",
+        entries: [{ ...entry, username: "After" }],
+    });
+    assert.notDeepEqual(firstLeaderboard, secondLeaderboard);
+    const firstProfile = await renderUserProfileCard666({ guildId: "cache-test", userId: "123", guildName: "Before" });
+    const secondProfile = await renderUserProfileCard666({ guildId: "cache-test", userId: "123", guildName: "After" });
+    assert.notDeepEqual(firstProfile, secondProfile);
+    for (const card of [firstLeaderboard, secondLeaderboard, firstProfile, secondProfile])
+        assert.equal(card.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
+});
+
+test("oversized responses keep the original message instead of exceeding Discord's attachment limit", async () => {
+    const input = { content: Array.from({ length: 381 }, (_, i) => `line ${i}`).join("\n"), components: [] };
+    assert.equal(await toImagePayload(input), input);
+});
+
+test("now playing image and metadata become one attachment on send and edit", async () => {
+    const { AttachmentBuilder } = require("discord.js");
+    const { renderNowPlayingCard666 } = require("../src/functions/cardRenderer666.js");
+    const image = await renderNowPlayingCard666({
+        botId: "single-card-test",
+        title: "Song title",
+        author: "Artist",
+        elapsedText: "01:00",
+        durationText: "03:00",
+        progressRatio: 1 / 3,
+    });
+    const embed = new EmbedBuilder()
+        .setAuthor({ name: "666 • Music Bot • Now Playing" })
+        .setDescription(
+            "**[Song title](https://example.com/song)**\n👤 **Artist:** Artist • 💿 **Album:** Album • `▶️ Playing`\n\n`01:00` ▰▰●▱▱ `03:00`",
+        )
+        .addFields(
+            { name: "Requested By", value: "<@123456789012345678>" },
+            { name: "Duration", value: "03:00" },
+            { name: "Elapsed / Remaining", value: "01:00 / -02:00" },
+            { name: "Bot", value: "Music Bot" },
+            { name: "Source", value: "YouTube" },
+            { name: "Queue", value: "2 tracks" },
+            { name: "Volume", value: "50%" },
+            { name: "Loop", value: "Off" },
+            { name: "Autoplay", value: "On" },
+        )
+        .setFooter({ text: "Music engine" })
+        .setImage("attachment://666-nowplaying.png");
+    const components = [{ type: 1, components: [{ type: 2, style: 1, label: "Pause", custom_id: "pause" }] }];
+    const input = { embeds: [embed], files: [new AttachmentBuilder(image, { name: "666-nowplaying.png" })], components };
+    const sent = await toImagePayload(input);
+    assert.equal(sent.files.length, 1);
+    assert.equal(sent.files[0].name, "lagukan-response-1.png");
+    assert.equal(sent.embeds.length, 0);
+    assert.equal(sent.components, components);
+    assert.match(sent.files[0].description, /Song title/);
+    assert.match(sent.files[0].description, /https:\/\/example.com\/song/);
+    assert.match(sent.files[0].description, /Elapsed \/ Remaining/);
+    assert.match(sent.files[0].description, /YouTube/);
+    assert.ok(sent.files[0].attachment.readUInt32BE(20) > image.readUInt32BE(20));
+    const message = {
+        attachments: new Map([
+            ["1", { id: "1", name: "666-nowplaying.png" }],
+            ["2", { id: "2", name: "lagukan-response-1.png" }],
+            ["3", { id: "3", name: "other.pdf" }],
+        ]),
+    };
+    const edited = await toImagePayload(input, { edit: true, message });
+    assert.equal(edited.files.length, 1);
+    assert.deepEqual(edited.attachments, [{ id: "3" }]);
+});
+
+test("profile and leaderboard cards with details also stay in one image", async () => {
+    const { AttachmentBuilder } = require("discord.js");
+    const { renderSvgToPngBuffer } = require("../src/functions/cardRenderer666.js");
+    const image = await renderSvgToPngBuffer(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="#150D13"/></svg>',
+    );
+    for (const name of ["666-profile.png", "666-leaderboard.png"]) {
+        const embed = new EmbedBuilder()
+            .setTitle("User profile")
+            .setDescription("Original details")
+            .addFields({ name: "Plays", value: "42" })
+            .setImage(`attachment://${name}`);
+        const output = await toImagePayload({ embeds: [embed], files: [new AttachmentBuilder(image, { name })] });
+        assert.equal(output.files.length, 1);
+        assert.match(output.files[0].description, /User profile/);
+        assert.match(output.files[0].description, /42/);
+    }
+});
+
+test("missing player card removes stale dashboard image but keeps unrelated attachments", async () => {
+    const embed = new EmbedBuilder().setDescription("Playback details still available").setImage("attachment://666-nowplaying.png");
+    const message = {
+        attachments: new Map([
+            ["1", { id: "1", name: "666-nowplaying.png" }],
+            ["2", { id: "2", name: "other.pdf" }],
+        ]),
+    };
+    const result = await toImagePayload({ embeds: [embed] }, { edit: true, message });
+    assert.deepEqual(result.attachments, [{ id: "2" }]);
+    assert.equal(result.files.length, 1);
+    assert.match(result.files[0].description, /Playback details still available/);
 });

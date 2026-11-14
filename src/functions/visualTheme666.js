@@ -1,3 +1,21 @@
+const fs = require("node:fs");
+const path = require("node:path");
+
+// Local, decorative artwork only. Missing or unreadable artwork falls back to vector gradients.
+let backdropData;
+function backgroundArtwork666(width, height, opacity = 0.6) {
+    if (backdropData === undefined) {
+        try {
+            backdropData = `data:image/jpeg;base64,${fs.readFileSync(path.join(__dirname, "../assets/visuals/crimson-ambience.jpg")).toString("base64")}`;
+        } catch {
+            backdropData = null;
+        }
+    }
+    return backdropData
+        ? `<image href="${backdropData}" width="${width}" height="${height}" preserveAspectRatio="none" opacity="${opacity}"/>`
+        : "";
+}
+
 // Decorative SVG primitives shared by Discord's rasterized cards. They carry no data or controls.
 function brandMark666(x, y, size = 52) {
     return `<g transform="translate(${x} ${y}) scale(${size / 52})"><circle cx="26" cy="26" r="25" fill="#090709" stroke="#49202F"/><path d="M17 12l4 3 5-7 5 7 4-3-2 7H19z" fill="#B91F3B"/><text x="26" y="39" text-anchor="middle" fill="#E53955" font-family="Inter, DejaVu Sans, sans-serif" font-size="22" font-weight="bold" font-style="italic" letter-spacing="-2">666</text><path d="M39 35v8m0-8 5-1v7" stroke="#E53955" stroke-width="1.5"/><circle cx="37" cy="44" r="2" fill="#E53955"/><circle cx="42" cy="42" r="2" fill="#E53955"/></g>`;
@@ -33,4 +51,12 @@ function voiceDetailIcon666(kind, x, y) {
     return `<g transform="translate(${x} ${y})" fill="#B9AAB1" opacity=".85">${shapes[kind] || ""}</g>`;
 }
 
-module.exports = { brandMark666, ambientDetails666, waveform666, musicDecoration666, voiceDetailIcon666, artworkBadge666 };
+module.exports = {
+    backgroundArtwork666,
+    brandMark666,
+    ambientDetails666,
+    waveform666,
+    musicDecoration666,
+    voiceDetailIcon666,
+    artworkBadge666,
+};
