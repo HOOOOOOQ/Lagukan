@@ -1,3 +1,4 @@
+const { setPlaybackVoiceStatus, clearPlaybackVoiceStatus } = require("../../../functions/voiceChannelStatus.js");
 const { EmbedBuilder } = require("discord.js");
 const { handleVoiceStateLog } = require("../../../functions/voiceLogger.js");
 const {
@@ -47,13 +48,18 @@ module.exports = async (client, oldState, newState) => {
     if (isSelfEvent && oldState?.channelId && newState?.channelId && oldState.channelId !== newState.channelId) {
         const movedPlayer = getGuildPlayer(client, guildId);
         if (movedPlayer) {
+            clearPlaybackVoiceStatus(client, movedPlayer, oldState.channelId).catch(() => {});
             movedPlayer.voiceId = newState.channelId;
+            if (movedPlayer.queue?.current) setPlaybackVoiceStatus(client, movedPlayer, movedPlayer.queue.current).catch(() => {});
             await openOrSyncVoiceSession666(client, movedPlayer).catch(() => {});
         }
     }
 
     // Handle THIS bot's disconnect from a voice channel + Auto 24/7 recovery
     if (isSelfEvent && newState.channelId == null) {
+        const disconnectedPlayer = getGuildPlayer(client, guildId);
+        if (disconnectedPlayer && oldState.channelId)
+            clearPlaybackVoiceStatus(client, disconnectedPlayer, oldState.channelId).catch(() => {});
         cancelInactivityTimer(guildId, client);
         await closeVoiceSession666(client, guildId, "voice_disconnected");
 

@@ -1,3 +1,4 @@
+const { clearPlaybackVoiceStatus } = require("../../../functions/voiceChannelStatus.js");
 const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
 const { onTrackSessionEnd } = require("../../../functions/musicStatsEngine.js");
 const { onProfile666TrackEnd } = require("../../../functions/profile666Engine.js");
@@ -6,6 +7,7 @@ const Logger = require("../../../utils/logger");
 
 module.exports = async (client, player) => {
     if (!player) return;
+    if (!player.queue?.current && !Number(player.queue?.size || 0)) clearPlaybackVoiceStatus(client, player).catch(() => {});
 
     const guild = client.guilds?.cache?.get?.(player.guildId);
     Logger.debug(`Track ended from ${guild?.name || "Unknown"} (${player.guildId})`);
