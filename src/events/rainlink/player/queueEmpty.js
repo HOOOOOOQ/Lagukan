@@ -1,3 +1,4 @@
+const { clearPlaybackVoiceStatus } = require("../../../functions/voiceChannelStatus.js");
 const { EmbedBuilder } = require("discord.js");
 const {
     PLAYER_STATE_DESTROYED,
@@ -34,6 +35,8 @@ module.exports = async (client, player) => {
     if (Number(player.queue?.size || 0) > 0 || player.queue?.current) {
         return;
     }
+
+    clearPlaybackVoiceStatus(client, player).catch(() => {});
 
     if (player._manualStopAt && Date.now() - player._manualStopAt < 5000) {
         player._manualStopAt = 0;

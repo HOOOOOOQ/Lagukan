@@ -75,6 +75,7 @@ npm start
 - ☑️ MongoDB-backed guild/user state with periodic sync
 - ☑️ Lyrics lookup for current song (`/lyric`)
 - ☑️ Voice Channel Activity Logger (`Joined` & `Leaving` directly in active Voice Channel Text Chat) with per-guild settings (`/voicelog`)
+- ☑️ Automatic voice channel status for the current track (requires `Set Voice Channel Status`)
 - ☑️ Multi-bot safe architecture (zero shared text prefixes; slash commands & interactions scoped strictly per bot application)
 - ☑️ Termux Android Standalone Mode (`npm run start:termux`) & Web Installer (`web-installer/`)
 - ☑️ Auto-leave timeout when inactive/alone (configurable)
@@ -244,6 +245,10 @@ docker compose up -d --build
 ```bash
 docker compose down
 ```
+
+### Automatic voice channel music status
+
+The bot shows the playing track in its voice channel status and updates it when paused or resumed. This replaces an existing channel status when playback starts. The default emoji is `:Spotify1:`: the bot looks for it in the current server first, then among its cached emojis if there is exactly one match. Set `VOICE_STATUS_EMOJI` to another name (such as `:music:`) or a full Discord custom emoji such as `<a:music:123456789012345678>` to select an exact emoji. If no unique match is available or Discord rejects the custom emoji with a validation error, the bot uses 🎵. The emoji must be usable by the bot (including external emoji permissions where applicable), and custom emoji rendering in voice status depends on Discord. Set `VOICE_STATUS_ENABLED=false` to disable the feature. The bot needs **Set Voice Channel Status**; **Manage Channels** is additionally required when clearing a status after it has disconnected. The bot attempts to clear only its own status when a queue ends or the player leaves, and skips clearing if it cannot verify the latest status via Discord's gateway. Coordination between independent bot processes is not guaranteed.
 
 ## `🔐` Permissions Needed
 

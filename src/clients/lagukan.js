@@ -9,6 +9,7 @@ class LagukanClient extends Client {
     constructor(customOptions = {}) {
         const intents = [
             GatewayIntentBits.Guilds,
+            GatewayIntentBits.GuildExpressions,
             GatewayIntentBits.GuildVoiceStates,
             GatewayIntentBits.GuildMessages,
             GatewayIntentBits.MessageContent,

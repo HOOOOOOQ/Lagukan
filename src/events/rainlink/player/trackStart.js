@@ -9,6 +9,7 @@ const { resetPartyVoteSkip } = require("../../../functions/musicPartySystem.js")
 const { saveAutoResumeSnapshot } = require("../../../functions/radioAndSleepManager.js");
 const { refreshRequestPanelMessage } = require("../../../functions/voiceRequestSystem.js");
 const Logger = require("../../../utils/logger");
+const { setPlaybackVoiceStatus } = require("../../../functions/voiceChannelStatus.js");
 
 module.exports = async (client, player, track) => {
     if (!player || player.state === PLAYER_STATE_DESTROYED || player.sudoDestroy || !track) return;
@@ -16,6 +17,7 @@ module.exports = async (client, player, track) => {
     resetPlaybackFailure(player.guildId, client.user?.id);
 
     const isGuessTheSong = Boolean(player.data?.get?.("guessTheSongActive"));
+    if (!isGuessTheSong) setPlaybackVoiceStatus(client, player, track).catch(() => {});
     if (!isGuessTheSong) {
         await openOrSyncVoiceSession666(client, player).catch(() => {});
         recordGuildTrackHistory(client, player.guildId, track).catch(() => {});

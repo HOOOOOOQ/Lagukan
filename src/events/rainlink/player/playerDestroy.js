@@ -1,3 +1,4 @@
+const { clearPlaybackVoiceStatus } = require("../../../functions/voiceChannelStatus.js");
 const { isGuildManuallyDisconnected, isGuildLeavingInProgress } = require("../../../functions/voiceSessionManager.js");
 const { cleanupNowPlayingMessage } = require("../../../functions/nowPlayingManager.js");
 const { onTrackSessionEnd } = require("../../../functions/musicStatsEngine.js");
@@ -14,6 +15,7 @@ module.exports = async (client, player) => {
         const guildId = String(player.guildId || "");
         if (!guildId) return;
 
+        clearPlaybackVoiceStatus(client, player).catch(() => {});
         const guild = client.guilds.cache.get(guildId);
 
         if (guild) {
