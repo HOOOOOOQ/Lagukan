@@ -48,15 +48,15 @@ module.exports = {
             return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
 
+        const deferred = await safeDeferReply(interaction);
+        if (!deferred) return;
+
         player = (await cleanupStalePlayerIfDisconnected(client, interaction.guild)) || null;
 
         if (player && player.voiceId !== interaction.member.voice.channelId) {
             embed.setDescription(`You must be in the same voice channel as ${botName}.`);
             return safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
         }
-
-        const deferred = await safeDeferReply(interaction);
-        if (!deferred) return;
 
         const query = interaction.options.getString("query");
         const directPlay = Boolean(interaction.options.getBoolean("direct"));

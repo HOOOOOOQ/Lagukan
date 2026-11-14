@@ -35,6 +35,7 @@ module.exports = {
 
         const force = Boolean(interaction.options.getBoolean("force"));
         if (force) {
+            if (!(await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral }))) return;
             const count = player.queue.size;
             player.queue.clear();
             player.data?.set?.("shuffled", false);

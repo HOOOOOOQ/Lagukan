@@ -154,6 +154,14 @@ async function prepareGuildForReconnect(client, guildId) {
     }
 
     const gId = String(guildId);
+    const pending = client.rainlink._lagukanCreateInFlight?.get(gId);
+    if (pending) {
+        try {
+            if (await pending.task) return false;
+        } catch {
+            /* Guard cleans up failed creations. */
+        }
+    }
     const existing = client.rainlink.players.get(gId);
     if (!existing) return true;
 
@@ -198,6 +206,14 @@ async function cleanupStalePlayerIfDisconnected(client, guild) {
     }
 
     const gId = String(guild.id);
+    const pending = client.rainlink._lagukanCreateInFlight?.get(gId);
+    if (pending) {
+        try {
+            return (await pending.task) || null;
+        } catch {
+            return null;
+        }
+    }
     const existingPlayer = client.rainlink.players.get(gId) || null;
     if (!existingPlayer) return null;
 
@@ -235,7 +251,7 @@ async function cleanupStalePlayerIfDisconnected(client, guild) {
 
 /**
  * Clears the manual-disconnect lock for a specific `(bot, guild)` when a user runs `/play`, `/join`,
- * `/247-setup`, or `/247-enable`, without affecting any other bot or server.
+ * or automatic reconnection, without affecting any other bot or server.
  */
 async function clearManualDisconnect(client, guildId, guild = null) {
     if (!guildId) return;

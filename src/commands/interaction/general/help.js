@@ -120,7 +120,7 @@ function buildSingleCommandEmbed(client, doc) {
     const botName = client.config.botName || "Lagukan";
     const iconUrl = client.user?.displayAvatarURL?.() || undefined;
     const catMeta = HELP_CATEGORIES[doc.categoryKey] || HELP_CATEGORIES.music;
-    const cmdDisplay = doc.isPrefix ? doc.name : `/${doc.name}`;
+    const cmdDisplay = `/${doc.name}`;
 
     return new EmbedBuilder()
         .setColor(client.config.embedColor)
@@ -175,14 +175,14 @@ function buildHelpComponents(client, state, allDocs) {
             },
             {
                 label: "Personal Profile — 666 Profile, Leaderboard & Wrapped",
-                description: "/profile, 666!prof, /leaderboard, /musicprofile & /wrapped",
+                description: "/profile, /leaderboard, /musicprofile & /wrapped",
                 value: "profile",
                 emoji: "👤",
                 default: view === "section" && sectionKey === "profile",
             },
             {
                 label: "Server Settings — Auto 24/7, Notification, Filter & Config",
-                description: "/247-setup, /247-enable, /247-disable, /profile-notification & /musicconfig",
+                description: "/profile-notification & /musicconfig",
                 value: "settings",
                 emoji: "⚙️",
                 default: view === "section" && sectionKey === "settings",
@@ -232,7 +232,7 @@ function buildHelpComponents(client, state, allDocs) {
             .setPlaceholder("🔎 Pilih command untuk melihat kartu detail penuh...")
             .addOptions(
                 activeSectionDocs.slice(0, 25).map((doc) => ({
-                    label: doc.isPrefix ? doc.name : `/${doc.name}`,
+                    label: `/${doc.name}`,
                     description: doc.func.slice(0, 95),
                     value: doc.name,
                     default: view === "command" && selectedCommand?.name === doc.name,

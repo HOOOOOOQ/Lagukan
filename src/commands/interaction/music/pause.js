@@ -1,6 +1,6 @@
 const { EmbedBuilder, MessageFlags } = require("discord.js");
 const { refreshNowPlayingDashboard } = require("../../../functions/nowPlayingManager.js");
-const { safeReply } = require("../../../functions/interactionResponder.js");
+const { safeReply, safeDeferReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "pause",
@@ -19,6 +19,7 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
+        if (!(await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral }))) return;
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
         if (player.paused) {

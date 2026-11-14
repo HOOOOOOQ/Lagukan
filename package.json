@@ -4,12 +4,13 @@
     "description": "Lagukan Music Bot - Shard-ready Discord music bot powered by Rainlink, Lavalink, and Discord.js v14",
     "main": "src/index.js",
     "engines": {
-        "node": ">=18.0.0"
+        "node": ">=20.19.0"
     },
     "scripts": {
         "start": "node ./src/index.js",
         "start:termux": "STANDALONE_MODE=true node ./src/index.js",
         "validate:commands": "node ./src/functions/slashCommandValidator.js",
+        "test": "node --test test/*.test.js",
         "format": "prettier -w .",
         "format:check": "prettier -c ."
     },
@@ -25,7 +26,7 @@
         "mongoose": "^9.2.1",
         "node-cron": "^4.2.1",
         "pretty-ms": "^9.3.0",
-        "rainlink": "^1.2.7",
+        "rainlink": "1.2.9",
         "rainlink-voice": "^1.0.1"
     },
     "devDependencies": {

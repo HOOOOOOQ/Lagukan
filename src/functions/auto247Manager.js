@@ -172,17 +172,14 @@ async function upsertAuto247Config(client, { guildId, voiceChannelId, enabled = 
  * - Never creates duplicate voice connections.
  * - Strictly isolated per `(botApplicationId, guildId)`.
  */
-async function ensureBotAuto247Connected(client, guildId, { explicitNode = null, forceMove = false } = {}) {
+async function connectAuto247Unlocked(client, guildId, { explicitNode = null, forceMove = false } = {}) {
     const botApplicationId = getBotId(client);
     const gId = String(guildId || "");
     if (!botApplicationId || !gId) {
         return { connected: false, reason: "invalid_identity" };
     }
 
-    const { locks, attempts } = ensureClientAuto247State(client);
-    if (locks.has(gId)) {
-        return { connected: false, reason: "connect_in_progress" };
-    }
+    const { attempts } = ensureClientAuto247State(client);
 
     const config = await getAuto247Config(client, gId);
     if (!config || !config.enabled) {
@@ -224,7 +221,6 @@ async function ensureBotAuto247Connected(client, guildId, { explicitNode = null,
         }
     }
 
-    locks.add(gId);
     try {
         if (forceMove && existingPlayer && String(existingPlayer.voiceId) !== String(voiceChannel.id)) {
             await Promise.resolve(existingPlayer.destroy()).catch(() => {});
@@ -238,7 +234,8 @@ async function ensureBotAuto247Connected(client, guildId, { explicitNode = null,
         }
 
         // Verify Lavalink node readiness (if nodes are configured)
-        const targetNode = explicitNode || selectHealthyNode(client) || getAnyConnectedNode(client) || null;
+        const nodes = client?.rainlink?.nodes?.all?.() || [];
+        const targetNode = explicitNode || (await selectHealthyNode(nodes)) || getAnyConnectedNode(client) || null;
         if (targetNode) {
             const nodeReady = await waitForNodeSessionReady(targetNode, 4000);
             if (!nodeReady) {
@@ -261,12 +258,10 @@ async function ensureBotAuto247Connected(client, guildId, { explicitNode = null,
             deaf: true,
         });
 
+        if (!createdPlayer) return { connected: false, reason: "create_player_failed" };
         attempts.delete(gId);
         cancelAuto247Timer(client, gId);
-
-        if (createdPlayer) {
-            await openOrSyncVoiceSession666(client, createdPlayer);
-        }
+        await openOrSyncVoiceSession666(client, createdPlayer);
 
         Logger.info(
             `[Auto247] Bot ${client.user?.username || botApplicationId} terhubung otomatis ke VC ${voiceChannel.name} (${voiceChannel.id}) di ${guild.name}`,
@@ -280,8 +275,43 @@ async function ensureBotAuto247Connected(client, guildId, { explicitNode = null,
     } catch (err) {
         Logger.warn(`[Auto247] Gagal menyambungkan bot ${botApplicationId} ke VC ${voiceChannel.id} (${gId}): ${err?.message || err}`);
         return { connected: false, reason: err?.message || "create_player_failed" };
+    }
+}
+
+async function ensureBotAuto247Connected(client, guildId, options = {}) {
+    const { locks } = ensureClientAuto247State(client);
+    const key = String(guildId || "");
+    if (locks.has(key)) return { connected: false, reason: "connect_in_progress" };
+    locks.add(key);
+    try {
+        return await connectAuto247Unlocked(client, guildId, options);
     } finally {
-        locks.delete(gId);
+        locks.delete(key);
+    }
+}
+
+// Optional per-process provisioning. Existing database configs remain untouched when unset.
+async function provisionAuto247FromEnvironment(client) {
+    const raw = process.env.AUTO247_CHANNELS;
+    const botApplicationId = getBotId(client);
+    if (!raw || !botApplicationId || !isDbReady(client?.auto247ConfigData)) return;
+    let entries;
+    try {
+        entries = JSON.parse(raw);
+    } catch {
+        Logger.warn("[Auto247] AUTO247_CHANNELS must be a JSON object of guild IDs to voice channel IDs.");
+        return;
+    }
+    if (!entries || Array.isArray(entries) || typeof entries !== "object") return;
+    for (const [guildId, value] of Object.entries(entries)) {
+        const voiceChannelId = typeof value === "string" ? value : value?.voiceChannelId;
+        if (!/^\d{5,22}$/.test(guildId) || !/^\d{5,22}$/.test(String(voiceChannelId || ""))) {
+            Logger.warn("[Auto247] Invalid guild or voice channel ID in AUTO247_CHANNELS; entry skipped.");
+            continue;
+        }
+        // A shard may only operate on guilds it owns.
+        if (!client.guilds?.cache?.has?.(guildId)) continue;
+        await upsertAuto247Config(client, { guildId, voiceChannelId, enabled: true, autoReconnect: true });
     }
 }
 
@@ -293,6 +323,8 @@ async function syncAllAuto247OnStartup(client, explicitNode = null) {
     const botApplicationId = getBotId(client);
     const model = client?.auto247ConfigData;
     if (!botApplicationId || !model || !isDbReady(model)) return [];
+
+    await provisionAuto247FromEnvironment(client);
 
     const docs =
         (await model
@@ -318,6 +350,9 @@ async function syncAllAuto247OnStartup(client, explicitNode = null) {
 
         const res = await ensureBotAuto247Connected(client, plain.guildId, { explicitNode });
         results.push({ guildId: plain.guildId, ...res });
+        if (!res.connected && res.reason !== "waiting_for_lavalink_node" && res.reason !== "connect_in_progress") {
+            await scheduleAuto247Reconnect(client, plain.guildId, "startup");
+        }
     }
 
     return results;

@@ -1,5 +1,6 @@
 const LagukanClient = require("./lagukan.js");
 const client = new LagukanClient();
+require("../functions/gracefulShutdown.js").installGracefulShutdown(client);
 
 client.connect();
 

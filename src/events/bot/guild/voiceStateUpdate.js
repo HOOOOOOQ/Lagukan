@@ -154,9 +154,7 @@ module.exports = async (client, oldState, newState) => {
 
                             const timeoutEmbed = new EmbedBuilder()
                                 .setColor(THEME_666.embedColor)
-                                .setDescription(
-                                    "Disconnecting from the voice channel due to inactivity. You can keep this bot connected 24/7 using `/247-setup`.",
-                                );
+                                .setDescription("Disconnecting from the voice channel due to inactivity.");
 
                             const msg = await leaveChannel.send({ embeds: [timeoutEmbed] }).catch(() => null);
                             if (msg) {

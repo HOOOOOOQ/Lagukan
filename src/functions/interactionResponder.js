@@ -1,5 +1,16 @@
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, MessageFlags, MessageFlagsBitField } = require("discord.js");
+const { toImagePayload, extractLines } = require("./imageMessageRenderer.js");
+const lastInteractionMessages = new WeakMap();
 const Logger = require("../utils/logger");
+
+function voiceConnectionErrorMessage(error) {
+    const message = String(error?.message || "");
+    if (/another channel/i.test(message)) return "Bot sedang menyambung ke channel lain. Tunggu sebentar dan coba lagi.";
+    if (/lavalink|session|node|timeout|timed out|abort/i.test(message)) {
+        return "Server musik sedang menyambung ulang atau belum siap. Tunggu sebentar, lalu coba lagi.";
+    }
+    return "Bot belum dapat terhubung ke voice channel. Periksa izin bot dan coba lagi.";
+}
 
 function isUnknownInteractionError(error) {
     if (!error) return false;
@@ -118,7 +129,12 @@ async function safeEditReply(interaction, payload) {
     const editPayload = stripReplyOnlyFields(payload);
 
     try {
-        return await interaction.editReply(editPayload);
+        const rendered = interaction.client?._lagukanImageMessages
+            ? await toImagePayload(editPayload, { edit: true, message: lastInteractionMessages.get(interaction) })
+            : editPayload;
+        const result = await interaction.editReply(rendered);
+        if (result && typeof result === "object") lastInteractionMessages.set(interaction, result);
+        return result;
     } catch (error) {
         if (isUnknownInteractionError(error) || isUnknownMessageError(error) || isInvalidWebhookTokenError(error)) {
             Logger.warn(
@@ -133,7 +149,7 @@ async function safeEditReply(interaction, payload) {
 }
 
 /**
- * Safely replies to an interaction (or prefix Message in shared permission guards).
+ * Safely replies to an interaction.
  * - Automatically routes to `editReply()` if `interaction.deferred` is already true.
  * - Blocks duplicate replies when `interaction.replied` is already true.
  * - Catches `10062` (`Unknown interaction`) and `InteractionAlreadyReplied` cleanly without retry loops.
@@ -141,15 +157,7 @@ async function safeEditReply(interaction, payload) {
 async function safeReply(target, payload) {
     if (!target) return null;
 
-    // Support prefix command `Message` objects passed through shared `getPermission.js`
-    if (!isInteractionLike(target)) {
-        if (typeof target.reply !== "function") return null;
-        const msgPayload = stripReplyOnlyFields(payload);
-        return target.reply(msgPayload).catch((err) => {
-            Logger.error("[Message] Gagal mengirim balasan pesan prefix:", err);
-            return null;
-        });
-    }
+    if (!isInteractionLike(target)) return null;
 
     if (typeof target.isRepliable === "function" && !target.isRepliable()) {
         return null;
@@ -165,7 +173,22 @@ async function safeReply(target, payload) {
     }
 
     try {
-        return await target.reply(payload);
+        if (
+            target.client?._lagukanImageMessages &&
+            extractLines(typeof payload === "string" ? { content: payload } : payload || {}).length &&
+            typeof target.deferReply === "function"
+        ) {
+            let ephemeral = Boolean(payload?.ephemeral);
+            try {
+                ephemeral ||= Boolean(MessageFlagsBitField.resolve(payload?.flags || 0) & MessageFlags.Ephemeral);
+            } catch {}
+            if (!(await safeDeferReply(target, ephemeral ? { flags: MessageFlags.Ephemeral } : {}))) return null;
+            return safeEditReply(target, payload);
+        }
+        const rendered = target.client?._lagukanImageMessages ? await toImagePayload(payload) : payload;
+        const result = await target.reply(rendered);
+        if (result && typeof result === "object") lastInteractionMessages.set(target, result);
+        return result;
     } catch (error) {
         if (isUnknownInteractionError(error)) {
             Logger.warn(
@@ -198,7 +221,8 @@ async function safeFollowUp(interaction, payload) {
     }
 
     try {
-        return await interaction.followUp(payload);
+        const rendered = interaction.client?._lagukanImageMessages ? await toImagePayload(payload) : payload;
+        return await interaction.followUp(rendered);
     } catch (error) {
         if (isUnknownInteractionError(error) || isInvalidWebhookTokenError(error)) {
             Logger.warn(
@@ -238,6 +262,7 @@ async function safeDeferUpdate(componentInteraction) {
 }
 
 module.exports = {
+    voiceConnectionErrorMessage,
     isUnknownInteractionError,
     isUnknownMessageError,
     isInvalidWebhookTokenError,

@@ -120,9 +120,7 @@ module.exports = async (client, player) => {
         return;
     }
 
-    const embed = new EmbedBuilder()
-        .setColor(THEME_666.embedColor)
-        .setDescription("The queue is empty. Leaving voice channel (use `/247-setup` or `/musicconfig` to stay connected 24/7).");
+    const embed = new EmbedBuilder().setColor(THEME_666.embedColor).setDescription("The queue is empty. Leaving voice channel.");
 
     if (channel) await channel.send({ embeds: [embed] }).catch(() => {});
 

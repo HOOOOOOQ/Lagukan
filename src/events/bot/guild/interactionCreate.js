@@ -50,6 +50,7 @@ module.exports = async (client, interaction) => {
         } catch (err) {
             if (!isUnknownInteractionError(err)) {
                 Logger.error("[VoiceRequest] Error pada interaksi Request Panel:", err);
+                await safeReply(interaction, { content: "Terjadi kesalahan. Silakan coba lagi.", flags: MessageFlags.Ephemeral });
             }
         }
         return;
@@ -67,6 +68,7 @@ module.exports = async (client, interaction) => {
         } catch (err) {
             if (!isUnknownInteractionError(err)) {
                 Logger.error("[MusicBattle] Error pada interaksi Music Battle:", err);
+                await safeReply(interaction, { content: "Terjadi kesalahan. Silakan coba lagi.", flags: MessageFlags.Ephemeral });
             }
         }
         return;
@@ -84,7 +86,11 @@ module.exports = async (client, interaction) => {
     createDataUser(client, interaction.user).catch(() => {});
 
     const command = client.slash.get(interaction.commandName);
-    if (!command) return;
+    if (!command)
+        return safeReply(interaction, {
+            content: "Perintah ini tidak tersedia. Coba lagi setelah sinkronisasi.",
+            flags: MessageFlags.Ephemeral,
+        });
 
     const botName = client.user?.username || client.config.botName || "Lagukan";
     const userData = client.data.get(`userData_${interaction.user.id}`);
@@ -145,6 +151,7 @@ module.exports = async (client, interaction) => {
         }
 
         Logger.error(`[Interaction] Error tidak terduga pada /${interaction.commandName}:`, error);
+        await safeReply(interaction, { content: "Terjadi kesalahan. Silakan coba lagi.", flags: MessageFlags.Ephemeral });
     }
 };
 

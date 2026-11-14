@@ -845,7 +845,7 @@ async function buildLeaderboard666Payload(client, guild, callerUser, requestedPa
 }
 
 /**
- * Builds the User Music Profile (`666!prof`, `666!prof @user`, `/profile`) payload.
+ * Builds the User Music Profile (`/profile`) payload.
  */
 async function buildUserProfile666Payload(client, { guild, targetUser, targetMember = null }) {
     const guildId = String(guild?.id || "");

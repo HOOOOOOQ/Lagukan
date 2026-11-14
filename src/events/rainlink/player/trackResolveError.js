@@ -33,7 +33,7 @@ module.exports = async (client, player, track, message) => {
     await onTrackSessionFailed(client, player, track).catch(() => {});
     await cleanupNowPlayingMessage(player, true);
 
-    const breaker = recordPlaybackFailure(player.guildId);
+    const breaker = recordPlaybackFailure(player.guildId, client.user?.id);
     const channel = client.channels.cache.get(player.textId);
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
 

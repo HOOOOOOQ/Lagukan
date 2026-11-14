@@ -7,6 +7,7 @@ module.exports = async (client) => {
         if (isCloudDatabaseMode(client)) {
             await connectCloudDatabase(client);
             Logger.info("Database events loaded (Lagukan Cloud Gateway mode)");
+            if (client.isReady?.()) await require("../functions/auto247Manager.js").syncAllAuto247OnStartup(client);
             return;
         }
 
@@ -25,6 +26,7 @@ module.exports = async (client) => {
         await mongoose.connect(mongoUri);
 
         Logger.info("Database events loaded");
+        if (client.isReady?.()) await require("../functions/auto247Manager.js").syncAllAuto247OnStartup(client);
     } catch (error) {
         Logger.error("Failed to connect to database:", error?.message || error);
     }

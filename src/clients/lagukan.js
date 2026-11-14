@@ -61,13 +61,9 @@ class LagukanClient extends Client {
         this.userGuildAchievementData = require("../databases/schema/userGuildAchievement.js");
         this.musicSession666Data = require("../databases/schema/musicSession666.js");
         this.profileNotificationConfigData = require("../databases/schema/profileNotificationConfig.js");
-        this.messageClaimLockData = require("../databases/schema/messageClaimLock.js");
-        this.botGuildPresenceData = require("../databases/schema/botGuildPresence.js");
         this.auto247ConfigData = require("../databases/schema/auto247Config.js");
 
         this.messageContentFallback = false;
-        this.prefix = new Collection();
-        this.aliases = new Collection();
         this.slash = new Collection();
         this.data = new Map();
         this._processedInteractionIds = new Set();
@@ -81,6 +77,7 @@ class LagukanClient extends Client {
         });
 
         initializeNodeHealthManager(this);
+        require("../functions/imageMessageRenderer.js").installImageMessageHandlers(this);
 
         if (customOptions.token) {
             this.token = customOptions.token;

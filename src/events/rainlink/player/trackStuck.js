@@ -31,7 +31,7 @@ module.exports = async (client, player) => {
 
     await cleanupNowPlayingMessage(player, true);
 
-    const breaker = recordPlaybackFailure(player.guildId);
+    const breaker = recordPlaybackFailure(player.guildId, client.user?.id);
     const channel = client.channels.cache.get(player.textId);
     const embed = new EmbedBuilder().setColor(client.data.get(`color_${player.guildId}`) || client.config.embedColor);
 

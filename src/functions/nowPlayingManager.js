@@ -50,7 +50,7 @@ function buildProgressBar(positionMs, durationMs, isStream = false) {
     let bar = "";
     for (let i = 0; i < PROGRESS_BAR_SEGMENTS; i++) {
         if (i < indicatorIndex) bar += "▰";
-        else if (i === indicatorIndex) bar += "🟣";
+        else if (i === indicatorIndex) bar += "●";
         else bar += "▱";
     }
 
@@ -371,6 +371,29 @@ async function cleanupNowPlayingMessage(player, deleteMessage = true) {
     }
 }
 
+// Rendering only: reuse the existing player snapshot and dashboard refresh schedule.
+async function renderDashboardCard(client, player, track) {
+    const botName = client?.user?.username || client?.config?.botName || "Lagukan 666";
+    const requesterName = track.requester
+        ? track.requester.globalName || track.requester.username || String(track.requester.id || "Listener")
+        : "Autoplay";
+    const totalDurationMs = Math.max(0, Number(track.duration || 0));
+    const elapsedMs = Math.max(0, Number(player.position || 0));
+    return renderNowPlayingCard666({
+        botId: String(client?.user?.id || "bot"),
+        botName,
+        trackKey: String(track.identifier || track.uri || track.title || ""),
+        title: track.title || "Unknown Title",
+        author: track.author || "Unknown Artist",
+        requester: requesterName,
+        durationText: track.isStream ? "LIVE" : convertTime(totalDurationMs),
+        elapsedText: convertTime(elapsedMs),
+        progressRatio: totalDurationMs > 0 ? Math.min(1, elapsedMs / totalDurationMs) : 0.08,
+        artworkUrl: track.artworkUrl || null,
+        isPaused: Boolean(player.paused),
+    });
+}
+
 /**
  * Edits the active Now Playing message in-place when state changes
  * (start, pause, resume, track change, queue change, volume change, repeat, shuffle, autoplay, progress).
@@ -390,9 +413,32 @@ async function refreshNowPlayingDashboard(client, player, options = {}) {
     }
 
     try {
+        const message = player.message;
+        const track = player.queue.current;
+        const paused = Boolean(player.paused);
+        let card = null;
+        if (player._has666CardAttachment) card = await renderDashboardCard(client, player, track);
+        // A track, message or pause state may have changed while artwork was loading.
+        if (
+            player.state === PLAYER_STATE_DESTROYED ||
+            player.sudoDestroy ||
+            player.message !== message ||
+            player.queue?.current !== track ||
+            Boolean(player.paused) !== paused
+        )
+            return false;
         const embed = buildNowPlayingEmbed(client, player);
         const components = buildNowPlayingComponents(client, player);
-        await player.message.edit({ embeds: [embed], components });
+        const payload = { embeds: [embed], components };
+        if (card) {
+            payload.files = [new AttachmentBuilder(card, { name: "666-nowplaying.png" })];
+            if (message.attachments?.values) {
+                payload.attachments = [...message.attachments.values()]
+                    .filter((file) => file.name !== "666-nowplaying.png" && !String(file.name || "").startsWith("lagukan-response-"))
+                    .map((file) => ({ id: String(file.id) }));
+            }
+        }
+        await message.edit(payload);
         return true;
     } catch (err) {
         // Message was deleted manually in Discord channel — clear stale reference
@@ -772,29 +818,7 @@ async function sendOrReplaceNowPlayingDashboard(client, player, track = null) {
             // Stop previous collector before updating or replacing message
             await cleanupNowPlayingMessage(player, false);
 
-            const botName = client?.user?.username || client?.config?.botName || "Lagukan 666";
-            const requesterName = currentTrack.requester
-                ? currentTrack.requester.globalName || currentTrack.requester.username || String(currentTrack.requester.id || "Listener")
-                : "Autoplay";
-            const totalDurationMs = Math.max(0, Number(currentTrack.duration || 0));
-            const elapsedMs = Math.max(0, Number(player.position || 0));
-            const durationText = currentTrack.isStream ? "LIVE" : convertTime(totalDurationMs);
-            const elapsedText = convertTime(elapsedMs);
-            const progressRatio = totalDurationMs > 0 ? Math.min(1, elapsedMs / totalDurationMs) : 0.08;
-
-            const pngCard = await renderNowPlayingCard666({
-                botId: String(client?.user?.id || "bot"),
-                botName,
-                trackKey: String(currentTrack.identifier || currentTrack.uri || currentTrack.title || ""),
-                title: currentTrack.title || "Unknown Title",
-                author: currentTrack.author || "Unknown Artist",
-                requester: requesterName,
-                durationText,
-                elapsedText,
-                progressRatio,
-                artworkUrl: currentTrack.artworkUrl || null,
-                isPaused: Boolean(player.paused),
-            });
+            const pngCard = await renderDashboardCard(client, player, currentTrack);
 
             const files = [];
             if (pngCard) {

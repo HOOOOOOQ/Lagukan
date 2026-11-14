@@ -69,7 +69,7 @@ npm start
 - ☑️ Full slash command music suite: play, queue, skip, loop, filter, seek, volume, etc.
 - ☑️ Interactive now-playing controller with buttons (pause/resume, volume, loop, shuffle, previous, skip, stop)
 - ☑️ Queue pagination with button-based navigation
-- ☑️ 24/7 mode (`/247`) with reconnect persistence per guild
+- ☑️ automatic 24/7 mode with reconnect persistence per bot and guild
 - ☑️ Autoplay toggle (`/autoplay`) with YouTube-only fallback behavior
 - ☑️ Per-user ban system and maintenance mode (developer `@BotMention` commands)
 - ☑️ MongoDB-backed guild/user state with periodic sync
@@ -81,7 +81,7 @@ npm start
 
 ## `📌` Requirements
 
-- Node.js **18+ (LTS)** ([Download / Docs](https://nodejs.org/en/download))
+- Node.js **20.19+** (LTS) ([Download / Docs](https://nodejs.org/en/download))
 - MongoDB **5+** ([MongoDB Community Download](https://www.mongodb.com/try/download/community))
 - Lavalink server ([Lavalink Docs](https://lavalink.dev/getting-started/))
 - Java **17+ (LTS)** ([OpenJDK Downloads](https://adoptium.net/temurin/releases/?version=17)) (if you run your own Lavalink)
@@ -95,7 +95,7 @@ npm start
 | Music | `/play`, `/search`, `/queue`, `/nowplaying`, `/skip`, `/previous`, `/pause`, `/resume`, `/stop`, `/seek`, `/remove`, `/clear`, `/shuffle`, `/loop`, `/filter`, `/volume`, `/join`, `/leave`, `/lyric`, `/lyrics`, `/radio`, `/sleep`, `/musicparty` |
 | Playlist & Profile | `/playlist`, `/favorite`, `/history`, `/musicprofile`, `/musicrank`, `/wrapped`, `/musicleaderboard` |
 | Games & Premium | `/guessthesong`, `/musicbattle`, `/premium` |
-| Settings & DJ | `/247`, `/autoplay`, `/dj`, `/musicconfig`, `/musicrequest-config`, `/voicelog` |
+| Settings & DJ | `/autoplay`, `/dj`, `/musicconfig`, `/musicrequest-config`, `/voicelog` |
 
 ### Developer Mention Commands (Ops)
 
@@ -266,7 +266,7 @@ For stage channels, also allow:
 - **Bot offline**: verify `TOKEN` and intents in Discord Developer Portal
 - **No music playback**: verify Lavalink host/port/password/driver and Java/Lavalink logs
 - **Autoplay not working**: autoplay currently depends on YouTube track context
-- **Leaves VC too quickly**: increase `LEAVE_TIMEOUT` or enable `/247`
+- **Leaves VC too quickly**: increase `LEAVE_TIMEOUT` or configure automatic 24/7
 - **No DB persistence**: verify `MONGO_URI` connectivity
 - **Missing debug output**: set `DEBUG=true`
 
@@ -329,3 +329,13 @@ This project is licensed under the [MIT License](https://github.com/HOOOOOOQ/Lag
 [node-shield]: https://img.shields.io/badge/Node-18%2B-43853d?logo=node.js&logoColor=white&style=for-the-badge
 [discordjs-shield]: https://img.shields.io/badge/discord.js-v14-5865F2?logo=discord&logoColor=white&style=for-the-badge
 [rainlink-shield]: https://img.shields.io/badge/Lavalink%20Client-Rainlink-00bcd4?style=for-the-badge
+
+### Automatic 24/7 voice
+
+Existing enabled `Auto247Config` records are retained and loaded by bot application ID and guild ID. To provision a new bot, set `AUTO247_CHANNELS` in **that bot's** environment to a JSON object mapping guild IDs to voice channel IDs, for example `AUTO247_CHANNELS={"123456789012345678":"234567890123456789"}`. The bot stores these mappings in MongoDB with auto-reconnect enabled on startup. Each bot must use its own voice channel configuration. Remove or edit the corresponding database record to disable or change it; if the environment variable is still present, it provisions the record again on the next sync. MongoDB and the bot hosting process must remain available. Playback queues are not persisted across process restarts.
+
+### Image-based Discord messages
+
+Bot messages, voice logs, and slash-command responses are rendered as PNG cards. Grant the bot **Attach Files** in every text or voice chat it uses. Interactive buttons, select menus, modal inputs, and Discord's own UI remain native Discord components. Text inside the generated image cannot be copied, searched, or clicked; each generated attachment includes a limited text description for screen readers. If rendering fails or the Discord attachment limit is exceeded, the original text/embed is used as a fallback. Technical logs remain in server logs.
+
+The Black × Crimson cards use local Inter fonts. PNGs are static: animations and hover effects are not available inside the image. The player image is refreshed with the existing dashboard updates (progress updates are throttled to at least 15 seconds), not animated continuously. Queue artwork is fetched only from supported HTTPS artwork CDNs and falls back to a music icon when unavailable.

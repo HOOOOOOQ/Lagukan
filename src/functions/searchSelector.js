@@ -4,7 +4,7 @@ const { formatTrackSourceLabel, enqueueTracksStaged } = require("./musicSourceRe
 const { getOrCreateGuildPlayer, isPlayerActivelyPlayingOrPausedTrack, startPlayerIfIdle } = require("./musicPermissions.js");
 const { refreshNowPlayingDashboard, ensureNowPlayingDashboardVisible, truncateText } = require("./nowPlayingManager.js");
 const { recordTrackRequest } = require("./musicStatsEngine.js");
-const { safeEditReply, safeDeferUpdate, safeReply } = require("./interactionResponder.js");
+const { safeEditReply, safeDeferUpdate, safeReply, voiceConnectionErrorMessage } = require("./interactionResponder.js");
 const Logger = require("../utils/logger");
 
 async function enqueueSingleTrackAndRespond(client, interaction, track) {
@@ -35,7 +35,7 @@ async function enqueueSingleTrackAndRespond(client, interaction, track) {
         const connErrEmbed = new EmbedBuilder()
             .setColor(0xff4757)
             .setAuthor({ name: `${botName} • Voice Connection Error`, iconURL: client.user?.displayAvatarURL?.() })
-            .setDescription(`❌ ${err?.message || "Could not establish voice connection right now."}`);
+            .setDescription(`❌ ${voiceConnectionErrorMessage(err)}`);
         return safeEditReply(interaction, { embeds: [connErrEmbed], components: [] });
     }
 
@@ -180,10 +180,16 @@ async function enqueuePlaylistAndRespond(client, interaction, searchResult) {
             textChannelId: interaction.channelId,
         });
     } catch (err) {
+        Logger.music("error", "Failed to create or join playlist voice player", {
+            guildId: interaction.guildId,
+            userId: interaction.user?.id,
+            command: "play_playlist",
+            errorMessage: err,
+        });
         const connErrEmbed = new EmbedBuilder()
             .setColor(0xff4757)
             .setAuthor({ name: `${botName} • Voice Connection Error`, iconURL: client.user?.displayAvatarURL?.() })
-            .setDescription(`❌ ${err?.message || "Could not establish voice connection right now."}`);
+            .setDescription(`❌ ${voiceConnectionErrorMessage(err)}`);
         return safeEditReply(interaction, { embeds: [connErrEmbed], components: [] });
     }
 
