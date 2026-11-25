@@ -4,7 +4,7 @@ const { safeDeferReply, safeEditReply, safeDeferUpdate, safeReply } = require(".
 
 module.exports = {
     name: "clear",
-    description: "Clear all upcoming tracks in the Lagukan music queue",
+    description: "Clear all upcoming tracks in the 666 MUSIC queue",
     category: "music",
     options: [
         {

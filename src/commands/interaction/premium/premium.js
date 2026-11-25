@@ -13,7 +13,7 @@ function isBotAdminOrDev(client, userId) {
 
 module.exports = {
     name: "premium",
-    description: "Cek status fitur Premium Lagukan, kustomisasi tampilan server, atau kelola verifikasi (Admin Bot)",
+    description: "Cek status fitur Premium 666 MUSIC, kustomisasi tampilan server, atau kelola verifikasi (Admin Bot)",
     category: "premium",
     options: [
         {
@@ -154,10 +154,10 @@ module.exports = {
 
             const embed = new EmbedBuilder()
                 .setColor(access.customAccentColor || color)
-                .setTitle(`💎 Status Lagukan Premium — ${access.limits.label}`)
+                .setTitle(`💎 Status 666 MUSIC Premium — ${access.limits.label}`)
                 .setDescription(
                     (access.isPremium
-                        ? `✅ Akun atau server ini memiliki akses **Lagukan ${access.limits.label}** terverifikasi!\n\n`
+                        ? `✅ Akun atau server ini memiliki akses **666 MUSIC ${access.limits.label}** terverifikasi!\n\n`
                         : `ℹ️ Saat ini kamu menggunakan paket **Standard (Gratis)**. Akses Premium dikonfigurasi secara resmi & terverifikasi oleh Admin/Developer Bot (tanpa klaim otomatis palsu).\n\n`) +
                         `**Kuota & Fitur Aktif Kamu:**\n` +
                         `• Maks. Playlist Personal: \`${access.limits.maxPlaylists} playlist\`\n` +

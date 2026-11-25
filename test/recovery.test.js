@@ -402,3 +402,81 @@ test("stale cleanup waits for an in-progress voice connection instead of deletin
     assert.equal(players.get("guild"), player);
     assert.equal(disconnects, 0);
 });
+
+test("recovery does not restart a track stopped while voice sync is pending", async () => {
+    const { node, player } = makeNode("guild-stop-race");
+    invalidateSession(node);
+    node.driver.sessionId = "fresh";
+    node._lagukanInvalidSession = false;
+    let release;
+    let started;
+    const voiceStarted = new Promise((resolve) => {
+        started = resolve;
+    });
+    player.sendServerUpdate = () =>
+        new Promise((resolve) => {
+            release = resolve;
+            started();
+        });
+    const updates = [];
+    node.rest.updatePlayer = async (data) => updates.push(data);
+    const client = { user: { id: "bot" }, rainlink: { players: node.manager.players } };
+    const recovering = recoverNodePlayers(client, node);
+    await voiceStarted;
+    player.queue.current = null;
+    player.playing = false;
+    release();
+    await recovering;
+    assert.equal(updates.length, 0);
+    assert.equal(player.playing, false);
+    assert.equal(node._lagukanSnapshots.size, 0);
+});
+
+test("a new session arriving during recovery retries only on the new session", async () => {
+    const { node, player } = makeNode("guild-new-session-race");
+    invalidateSession(node);
+    node.driver.sessionId = "first";
+    node._lagukanInvalidSession = false;
+    let release;
+    let started;
+    const voiceStarted = new Promise((resolve) => {
+        started = resolve;
+    });
+    let sends = 0;
+    player.sendServerUpdate = async () => {
+        if (++sends === 1)
+            await new Promise((resolve) => {
+                release = resolve;
+                started();
+            });
+    };
+    const updates = [];
+    node.rest.updatePlayer = async (data) => updates.push({ session: node.driver.sessionId, ...data });
+    const client = { user: { id: "bot" }, rainlink: { players: node.manager.players } };
+    const first = recoverNodePlayers(client, node);
+    await voiceStarted;
+    invalidateSession(node);
+    node.driver.sessionId = "second";
+    node._lagukanInvalidSession = false;
+    const second = recoverNodePlayers(client, node);
+    release();
+    await Promise.all([first, second]);
+    assert.equal(sends, 2);
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].session, "second");
+    assert.equal(node._lagukanSnapshots.size, 0);
+});
+
+test("Lavalink websocket close never sends reserved close code 1006", () => {
+    const { RainlinkWebsocket } = require("rainlink");
+    let sent;
+    const fake = {
+        legacyWs: {
+            close: (code, reason) => {
+                sent = { code, reason };
+            },
+        },
+    };
+    RainlinkWebsocket.prototype.close.call(fake, 1006, "Self closed");
+    assert.deepEqual(sent, { code: 1000, reason: "Self closed" });
+});

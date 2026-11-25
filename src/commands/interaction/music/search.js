@@ -43,7 +43,7 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
-        const botName = client.config.botName || "Lagukan";
+        const botName = client.config.botName || "666 MUSIC";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
         const rateCheck = checkSearchRateLimit(interaction.user?.id);

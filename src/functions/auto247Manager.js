@@ -13,9 +13,10 @@ const { getGuildMusicSettings } = require("./musicPermissions.js");
 const { openOrSyncVoiceSession666 } = require("./profileNotificationManager.js");
 const Logger = require("../utils/logger");
 
-// Bounded exponential backoff delays (ms) — prevents infinite reconnect loops!
+// Fast retries followed by a bounded, low-frequency retry for prolonged outages.
 const BACKOFF_DELAYS_MS = Object.freeze([1500, 4000, 9000, 18000, 35000]);
 const MAX_BACKOFF_ATTEMPTS = BACKOFF_DELAYS_MS.length;
+const LONG_OUTAGE_RETRY_MS = 5 * 60 * 1000;
 
 function isDbReady(model) {
     if (isCloudDatabaseReady()) return true;
@@ -88,7 +89,7 @@ function pickFallbackTextChannelId(guild, voiceChannel) {
     return firstText?.id || voiceChannel?.id || null;
 }
 
-async function getAuto247Config(client, guildId) {
+async function getAuto247Config(client, guildId, { throwOnFailure = false } = {}) {
     const botApplicationId = getBotId(client);
     const gId = String(guildId || "");
     if (!botApplicationId || !gId) return null;
@@ -99,14 +100,21 @@ async function getAuto247Config(client, guildId) {
     }
 
     const model = client?.auto247ConfigData;
-    if (!model || !isDbReady(model)) return null;
+    if (!model) return null;
+    if (!isDbReady(model)) {
+        if (throwOnFailure) throw new Error("Database unavailable");
+        return null;
+    }
 
-    const doc = await model
-        .findOne({
-            botApplicationId,
-            guildId: gId,
-        })
-        .catch(() => null);
+    let doc;
+    try {
+        doc = await model.findOne({ botApplicationId, guildId: gId });
+    } catch (error) {
+        // A transient database failure is not proof that the config is absent.
+        Logger.warn(`[Auto247] Failed to read config (${botApplicationId}/${gId}): ${Logger.sanitize(error)}`);
+        if (throwOnFailure) throw error;
+        return null;
+    }
 
     const plain = doc ? (typeof doc.toObject === "function" ? doc.toObject() : { ...doc }) : null;
     cache.set(gId, plain);
@@ -360,7 +368,7 @@ async function syncAllAuto247OnStartup(client, explicitNode = null) {
 
 /**
  * Schedules bounded, staged auto-reconnect when THIS bot is unexpectedly disconnected
- * from its configured 24/7 voice channel. Never loops infinitely!
+ * from its configured 24/7 voice channel. Long outages retry at a capped, low frequency.
  */
 async function scheduleAuto247Reconnect(client, guildId, reason = "unexpected_disconnect", customBaseDelayMs = null) {
     const botApplicationId = getBotId(client);
@@ -371,38 +379,65 @@ async function scheduleAuto247Reconnect(client, guildId, reason = "unexpected_di
         return { scheduled: false, reason: "manual_disconnect" };
     }
 
-    const config = await getAuto247Config(client, gId);
+    const { timers, attempts } = ensureClientAuto247State(client);
+    if (timers.has(gId)) return { scheduled: false, reason: "reconnect_already_scheduled" };
+
+    let config;
+    try {
+        config = await getAuto247Config(client, gId, { throwOnFailure: true });
+    } catch {
+        // Database outages must not be mistaken for a disabled 24/7 setting.
+        if (timers.has(gId)) return { scheduled: false, reason: "reconnect_already_scheduled" };
+        const timer = setTimeout(() => {
+            timers.delete(gId);
+            scheduleAuto247Reconnect(client, gId, reason).catch((err) => {
+                Logger.warn(`[Auto247] Config retry failed (${botApplicationId}/${gId}): ${Logger.sanitize(err)}`);
+            });
+        }, LONG_OUTAGE_RETRY_MS);
+        timer.unref?.();
+        timers.set(gId, timer);
+        return { scheduled: true, reason: "database_unavailable", delayMs: LONG_OUTAGE_RETRY_MS };
+    }
+    if (timers.has(gId)) return { scheduled: false, reason: "reconnect_already_scheduled" };
+    if (isGuildManuallyDisconnected(client, gId) || isGuildLeavingInProgress(gId, client)) {
+        return { scheduled: false, reason: "manual_disconnect" };
+    }
     if (!config || !config.enabled || config.autoReconnect === false) {
         return { scheduled: false, reason: "auto_reconnect_disabled" };
     }
 
-    const { timers, attempts } = ensureClientAuto247State(client);
-    if (timers.has(gId)) {
-        return { scheduled: false, reason: "reconnect_already_scheduled" };
-    }
-
     const attemptIndex = attempts.get(gId) || 0;
-    if (attemptIndex >= MAX_BACKOFF_ATTEMPTS) {
+    const inLongOutage = attemptIndex >= MAX_BACKOFF_ATTEMPTS;
+    if (inLongOutage) {
         Logger.warn(
-            `[Auto247] Batas maksimum percobaan reconnect (${MAX_BACKOFF_ATTEMPTS}x) tercapai untuk bot ${botApplicationId} di guild ${gId}.`,
+            `[Auto247] Fast reconnect attempts exhausted for bot ${botApplicationId} in guild ${gId}; retrying at a slower interval.`,
         );
-        return { scheduled: false, reason: "max_backoff_reached" };
     }
 
-    const delayMs = typeof customBaseDelayMs === "number" && customBaseDelayMs >= 0 ? customBaseDelayMs : BACKOFF_DELAYS_MS[attemptIndex];
+    const delayMs = inLongOutage
+        ? LONG_OUTAGE_RETRY_MS
+        : typeof customBaseDelayMs === "number" && customBaseDelayMs >= 0
+          ? customBaseDelayMs
+          : BACKOFF_DELAYS_MS[attemptIndex];
 
-    attempts.set(gId, attemptIndex + 1);
+    attempts.set(gId, Math.min(attemptIndex + 1, MAX_BACKOFF_ATTEMPTS));
 
     const timer = setTimeout(() => {
         timers.delete(gId);
         void (async () => {
-            const latest = await getAuto247Config(client, gId);
+            let latest;
+            try {
+                latest = await getAuto247Config(client, gId, { throwOnFailure: true });
+            } catch {
+                await scheduleAuto247Reconnect(client, gId, reason);
+                return;
+            }
             if (!latest || !latest.enabled || latest.autoReconnect === false) return;
             if (isGuildManuallyDisconnected(client, gId) || isGuildLeavingInProgress(gId, client)) return;
 
             const outcome = await ensureBotAuto247Connected(client, gId);
-            if (!outcome.connected && outcome.reason !== "waiting_for_lavalink_node") {
-                await scheduleAuto247Reconnect(client, gId, `retry_after_${reason}`);
+            if (!outcome.connected) {
+                await scheduleAuto247Reconnect(client, gId, reason);
             }
         })().catch((err) => {
             Logger.debug(`[Auto247] Error saat percobaan reconnect (${botApplicationId}/${gId}): ${err?.message || err}`);
@@ -414,12 +449,13 @@ async function scheduleAuto247Reconnect(client, guildId, reason = "unexpected_di
     }
 
     timers.set(gId, timer);
-    return { scheduled: true, attempt: attemptIndex + 1, delayMs };
+    return { scheduled: true, attempt: Math.min(attemptIndex + 1, MAX_BACKOFF_ATTEMPTS), delayMs };
 }
 
 module.exports = {
     BACKOFF_DELAYS_MS,
     MAX_BACKOFF_ATTEMPTS,
+    LONG_OUTAGE_RETRY_MS,
     verifyVoiceChannelPermissions,
     getAuto247Config,
     isAuto247EnabledCached,

@@ -44,15 +44,30 @@ function sessionExpired(node, rejectedSession) {
 
 async function recoverNodePlayers(client, node) {
     const { waitForNodeSessionReady } = require("./nodeHealthManager.js");
-    if (node._lagukanRecoveryPromise) return node._lagukanRecoveryPromise;
+    if (node._lagukanRecoveryPromise) {
+        const previousSession = node._lagukanRecoverySession;
+        await node._lagukanRecoveryPromise;
+        // A second ready event can arrive while the previous session is still
+        // being recovered. Retry snapshots for the new session, never the old one.
+        if (node.driver?.sessionId && node.driver.sessionId !== previousSession && node._lagukanSnapshots?.size) {
+            return recoverNodePlayers(client, node);
+        }
+        return;
+    }
+    node._lagukanRecoverySession = node.driver?.sessionId || null;
     node._lagukanRecoveryPromise = (async () => {
         if (!(await waitForNodeSessionReady(node, 10000))) {
             Logger.warn(`[SessionRecovery] Node unavailable: ${node.options?.name || "Lavalink"}`);
             return;
         }
+        const recoverySession = node.driver?.sessionId || null;
+        node._lagukanRecoverySession = recoverySession;
+        const sessionIsCurrent = () =>
+            !node._lagukanInvalidSession && node.state === 0 && (node.driver?.sessionId || null) === recoverySession;
         Logger.info(`[SessionRecovery] Session recovered on ${node.options?.name || "Lavalink"}`);
         const snapshots = node._lagukanSnapshots || new Map();
         for (const [guildId, snapshot] of snapshots) {
+            if (!sessionIsCurrent()) break;
             const player = client.rainlink?.players?.get?.(guildId);
             if (player !== snapshot.player || player?.node !== node || player.sudoDestroy || player.queue?.current !== snapshot.current) {
                 snapshots.delete(guildId);
@@ -62,8 +77,14 @@ async function recoverNodePlayers(client, node) {
             for (let attempt = 0; attempt < 3; attempt++) {
                 try {
                     if (attempt) await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** (attempt - 1)));
-                    if (client.rainlink.players.get(guildId) !== player || player.queue?.current !== snapshot.current) break;
+                    const playerIsCurrent = () =>
+                        client.rainlink.players.get(guildId) === player &&
+                        player.node === node &&
+                        !player.sudoDestroy &&
+                        player.queue?.current === snapshot.current;
+                    if (!sessionIsCurrent() || !playerIsCurrent()) break;
                     await player.sendServerUpdate();
+                    if (!sessionIsCurrent() || !playerIsCurrent()) break;
                     if (snapshot.encoded && snapshot.current) {
                         const options = {
                             track: { encoded: snapshot.encoded },
@@ -72,6 +93,7 @@ async function recoverNodePlayers(client, node) {
                         };
                         if (!snapshot.current.isStream) options.position = snapshot.position;
                         await node.rest.updatePlayer({ guildId, playerOptions: options });
+                        if (!sessionIsCurrent() || !playerIsCurrent()) break;
                         player.playing = snapshot.playing;
                         player.paused = snapshot.paused;
                         player.track = snapshot.encoded;
@@ -81,10 +103,10 @@ async function recoverNodePlayers(client, node) {
                     break;
                 } catch (error) {
                     failure = error;
-                    if (node._lagukanInvalidSession || node.state !== 0) break;
+                    if (!sessionIsCurrent()) break;
                 }
             }
-            if (failure) {
+            if (failure && sessionIsCurrent()) {
                 Logger.error(`[SessionRecovery] Playback failed for guild ${guildId}:`, failure);
                 // Keep queue and current track intact rather than silently skipping it.
                 const channel = client.channels?.cache?.get?.(player.textId);
@@ -95,10 +117,11 @@ async function recoverNodePlayers(client, node) {
                     })
                     .catch(() => {});
             }
-            if (!node._lagukanInvalidSession) snapshots.delete(guildId);
+            if (sessionIsCurrent() && snapshots.get(guildId) === snapshot) snapshots.delete(guildId);
         }
     })().finally(() => {
         node._lagukanRecoveryPromise = null;
+        node._lagukanRecoverySession = null;
     });
     return node._lagukanRecoveryPromise;
 }

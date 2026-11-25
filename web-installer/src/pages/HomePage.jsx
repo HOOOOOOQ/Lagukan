@@ -64,21 +64,21 @@ export default function HomePage({ health, loadingHealth, onRefreshHealth, onNav
                 </div>
 
                 <h1 className="hero-title">
-                    <span className="gradient-text">LAGUKAN INSTALLER</span>
+                    <span className="gradient-text">666 MUSIC INSTALLER</span>
                 </h1>
 
                 <p className="hero-tagline">Your Music Bot, One Step Away.</p>
 
                 <p className="hero-desc">
-                    Pasang dan jalankan Discord Music Bot <strong>Lagukan</strong> langsung dari HP Android melalui <strong>Termux</strong>{" "}
-                    hanya dengan satu perintah. Terhubung otomatis ke layanan Cloud Database pusat yang aman tanpa perlu mengatur MongoDB
-                    URI sendiri.
+                    Pasang dan jalankan Discord Music Bot <strong>666 MUSIC</strong> langsung dari HP Android melalui{" "}
+                    <strong>Termux</strong> hanya dengan satu perintah. Terhubung otomatis ke layanan Cloud Database pusat yang aman tanpa
+                    perlu mengatur MongoDB URI sendiri.
                 </p>
 
                 <div className="cta-row">
                     <button type="button" className="btn btn-primary" onClick={() => onNavigate("install")}>
                         <Terminal size={18} />
-                        Install Lagukan
+                        Install 666 MUSIC
                     </button>
                     <button type="button" className="btn btn-secondary" onClick={() => onNavigate("docs")}>
                         <BookOpen size={18} />
@@ -139,7 +139,9 @@ export default function HomePage({ health, loadingHealth, onRefreshHealth, onNav
 
                 <div className="card">
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <span style={{ color: "var(--text-secondary)", fontSize: "0.84rem", fontWeight: 600 }}>Database Pusat Lagukan</span>
+                        <span style={{ color: "var(--text-secondary)", fontSize: "0.84rem", fontWeight: 600 }}>
+                            Database Pusat 666 MUSIC
+                        </span>
                         <span className={`badge ${serviceOk ? "badge-ok" : "badge-warn"}`}>{serviceOk ? "Terhubung" : "Siaga"}</span>
                     </div>
                     <div style={{ fontSize: "1.05rem", fontWeight: 800 }}>
@@ -164,7 +166,7 @@ export default function HomePage({ health, loadingHealth, onRefreshHealth, onNav
 
             {/* Bot Features Grid */}
             <div className="section-heading">
-                <h2>Fitur Unggulan Bot Musik Lagukan</h2>
+                <h2>Fitur Unggulan Bot Musik 666 MUSIC</h2>
             </div>
 
             <section className="grid-3">

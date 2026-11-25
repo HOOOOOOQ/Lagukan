@@ -10,7 +10,7 @@ const Logger = require("../../../utils/logger");
 module.exports = async (client) => {
     await emojiConfig(client);
 
-    const botName = client.user?.username || client.config.botName || "Lagukan";
+    const botName = client.user?.username || client.config.botName || "666 MUSIC";
     const dbReady = mongoose.connection.readyState === 1 || isCloudDatabaseReady();
 
     if (dbReady) {

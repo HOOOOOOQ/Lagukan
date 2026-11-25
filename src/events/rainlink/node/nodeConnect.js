@@ -9,7 +9,7 @@ module.exports = async (client, node) => {
     try {
         const nodeName = node?.options?.name || "Lavalink";
         recordNodeEvent(node, "connect");
-        Logger.info(`Node ${nodeName} ready`);
+        Logger.info(`Node ${nodeName} WebSocket connected; waiting for Lavalink session.`);
 
         fetchNodeCapabilities(node, true)
             .then((caps) => {
@@ -32,6 +32,7 @@ module.exports = async (client, node) => {
             }
             return;
         }
+        Logger.info(`Node ${nodeName} session ready`);
         await recoverNodePlayers(client, node);
 
         // Automatically connect this bot (`botApplicationId`) to all its configured 24/7 voice channels

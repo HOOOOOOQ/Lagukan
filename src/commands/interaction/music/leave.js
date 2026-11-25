@@ -5,7 +5,7 @@ const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions
 
 module.exports = {
     name: "leave",
-    description: "Disconnect Lagukan from the voice channel and stop Auto Reconnect",
+    description: "Disconnect 666 MUSIC from the voice channel and stop Auto Reconnect",
     category: "music",
     permissions: {
         bot: [],
@@ -18,7 +18,7 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
-        const botName = client.config.botName || "Lagukan";
+        const botName = client.config.botName || "666 MUSIC";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
         const activePlayer = player || getGuildPlayer(client, interaction.guildId);
         const botVoiceId = activePlayer?.voiceId || interaction.guild?.members?.me?.voice?.channelId || null;

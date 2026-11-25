@@ -4,7 +4,7 @@ const { safeDeferReply, safeEditReply } = require("../../../functions/interactio
 
 module.exports = {
     name: "musicprofile",
-    description: "Lihat kartu Profil Musik Lagukan lengkap (Level, XP, Statistik, Favorit, Playlist & Wrapped)",
+    description: "Lihat kartu Profil Musik 666 MUSIC lengkap (Level, XP, Statistik, Favorit, Playlist & Wrapped)",
     category: "profile",
     options: [
         {

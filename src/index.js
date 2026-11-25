@@ -15,7 +15,7 @@ if (!resolvedToken || resolvedToken === "YOUR_BOT_TOKEN") {
 }
 
 if (isStandaloneMode) {
-    Logger.info("Starting Lagukan in Standalone Single-Process Mode (Termux / Lightweight Mode)...");
+    Logger.info("Starting 666 MUSIC in Standalone Single-Process Mode (Termux / Lightweight Mode)...");
     require("./clients/manager.js");
 } else {
     const manager = new ClusterManager(`${__dirname}/clients/manager.js`, {
@@ -26,7 +26,7 @@ if (isStandaloneMode) {
         token: resolvedToken,
     });
 
-    manager.on("clusterCreate", (cluster) => Logger.info(`Launched Lagukan cluster ${cluster.id}`));
+    manager.on("clusterCreate", (cluster) => Logger.info(`Launched 666 MUSIC cluster ${cluster.id}`));
     manager.spawn({ timeout: -1 });
 }
 

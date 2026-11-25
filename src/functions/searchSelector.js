@@ -9,7 +9,7 @@ const Logger = require("../utils/logger");
 
 async function enqueueSingleTrackAndRespond(client, interaction, track) {
     const embedColor = client.config.embedColor;
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.config.botName || "666 MUSIC";
     const voiceChannel = interaction.member?.voice?.channel;
 
     if (!voiceChannel) {
@@ -164,7 +164,7 @@ async function enqueueSingleTrackAndRespond(client, interaction, track) {
 
 async function enqueuePlaylistAndRespond(client, interaction, searchResult) {
     const embedColor = client.config.embedColor;
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.config.botName || "666 MUSIC";
     const voiceChannel = interaction.member?.voice?.channel;
 
     if (!voiceChannel) {
@@ -266,7 +266,7 @@ async function enqueuePlaylistAndRespond(client, interaction, searchResult) {
  */
 async function presentSearchSelectMenu(client, interaction, query, tracks) {
     const embedColor = client.config.embedColor;
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.config.botName || "666 MUSIC";
     const candidates = tracks.slice(0, 10);
     const topTrack = candidates[0];
 

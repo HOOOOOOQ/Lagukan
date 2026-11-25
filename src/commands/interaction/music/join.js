@@ -6,7 +6,7 @@ const Logger = require("../../../utils/logger");
 
 module.exports = {
     name: "join",
-    description: "Make Lagukan join your voice channel",
+    description: "Make 666 MUSIC join your voice channel",
     category: "music",
     permissions: {
         bot: ["Connect", "Speak"],

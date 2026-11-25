@@ -45,7 +45,7 @@ module.exports = {
         const embed = new EmbedBuilder()
             .setColor(client.config?.embedColor || "#5865F2")
             .setAuthor({
-                name: `${client.config?.botName || "Lagukan"} • Listener Rank & Level`,
+                name: `${client.config?.botName || "666 MUSIC"} • Listener Rank & Level`,
                 iconURL: client.user?.displayAvatarURL?.(),
             })
             .setTitle(`${lv.badge} ${targetUser.username} — ${lv.title}`)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# LAGUKAN INSTALLER — Official Termux Android Setup Script (v3.1.0)
+# 666 MUSIC INSTALLER — Official Termux Android Setup Script (v3.1.0)
 # Tagline   : Your Music Bot, One Step Away.
 # Repository: https://github.com/HOOOOOOQ/Lagukan.git
 # Security  : Zero MongoDB URI embedded. Scoped Cloud Gateway Auth + chmod 600.
@@ -24,7 +24,7 @@ C_DIM="\033[2m"
 
 banner() {
   printf "\n${C_PURPLE}╔══════════════════════════════════════════════════════════════╗${C_RESET}\n"
-  printf "${C_PURPLE}║             🎵  L A G U K A N   I N S T A L L E R            ║${C_RESET}\n"
+  printf "${C_PURPLE}║          🎵  6 6 6   M U S I C   I N S T A L L E R          ║${C_RESET}\n"
   printf "${C_PURPLE}║              Your Music Bot, One Step Away.                  ║${C_RESET}\n"
   printf "${C_PURPLE}╚══════════════════════════════════════════════════════════════╝${C_RESET}\n\n"
 }
@@ -124,7 +124,7 @@ fi
 
 NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")"
 if [ "$NODE_MAJOR" -lt 18 ]; then
-  fail "Versi Node.js saat ini ($(node -v)) terlalu lama. Lagukan membutuhkan Node.js v18 ke atas."
+  fail "Versi Node.js saat ini ($(node -v)) terlalu lama. 666 MUSIC membutuhkan Node.js v18 ke atas."
 fi
 ok "Node.js $(node -v) & Git $(git --version | awk '{print $3}') siap digunakan."
 
@@ -144,7 +144,7 @@ PRESERVE_EXISTING_ENV=0
 if [ -d "$TARGET_DIR" ]; then
   warn "Folder '$TARGET_DIR' sudah ada! Installer TIDAK AKAN menimpa atau menghapus file Anda secara otomatis."
   printf "\nPilih tindakan yang diinginkan:\n"
-  printf "  [1] Update Lagukan (git pull --ff-only & pertahankan konfigurasi .env lama)\n"
+  printf "  [1] Update 666 MUSIC (git pull --ff-only & pertahankan konfigurasi .env lama)\n"
   printf "  [2] Konfigurasi ulang koneksi Cloud & Token saja (tanpa clone ulang)\n"
   printf "  [3] Instalasi baru yang aman (pindahkan folder lama ke cadangan backup, tanpa menghapus file)\n"
   printf "  [4] Batalkan & keluar\n\n"
@@ -182,10 +182,10 @@ if [ "$SKIP_CLONE" = "0" ]; then
     mkdir -p "$TARGET_DIR"
     cp "$LAGUKAN_LOCAL_REPO_SOURCE/package.json" "$TARGET_DIR/package.json"
   else
-    info "Mengunduh repository resmi Lagukan dari GitHub..."
+    info "Mengunduh repository resmi 666 MUSIC dari GitHub..."
     git clone --depth 1 "$REPO_URL" "$TARGET_DIR"
   fi
-  ok "Repository Lagukan berhasil disiapkan di '$TARGET_DIR'."
+  ok "Repository 666 MUSIC berhasil disiapkan di '$TARGET_DIR'."
 fi
 
 cd "$TARGET_DIR"
@@ -201,7 +201,7 @@ fi
 # ------------------------------------------------------------------------------
 # TAHAP 5 & 6: Registrasi / Sinkronisasi Layanan Backend Cloud Database Pusat
 # ------------------------------------------------------------------------------
-info "[5/9] Menghubungkan instalasi ke Lagukan Cloud Database Gateway..."
+info "[5/9] Menghubungkan instalasi ke 666 MUSIC Cloud Database Gateway..."
 INST_ID=""
 INST_KEY=""
 
@@ -303,9 +303,9 @@ if [ "$PRESERVE_EXISTING_ENV" = "0" ] || [ ! -f ".env" ]; then
   umask 077
   cat > ".env" <<EOF
 # =========================================================
-# LAGUKAN TERMUX CONFIGURATION (MANAGED BY WEB INSTALLER)
+# 666 MUSIC TERMUX CONFIGURATION (MANAGED BY WEB INSTALLER)
 # =========================================================
-BOT_NAME=Lagukan
+BOT_NAME="666 MUSIC"
 TOKEN=${DISCORD_BOT_TOKEN}
 EMBED_COLOR=8B5CF6
 STANDALONE_MODE=true
@@ -337,7 +337,7 @@ report_stage "config_setup"
 # ------------------------------------------------------------------------------
 # TAHAP 8: Pengujian Koneksi Cloud API & Pemeriksaan Konfigurasi
 # ------------------------------------------------------------------------------
-info "[8/9] Menguji koneksi terautentikasi ke Lagukan Cloud Database Gateway..."
+info "[8/9] Menguji koneksi terautentikasi ke 666 MUSIC Cloud Database Gateway..."
 PING_RES="$(curl -fsSL -X POST "$API_BASE_URL/api/v1/db/ping" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $INST_KEY" \

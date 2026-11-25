@@ -50,7 +50,7 @@ module.exports = {
         },
         {
             name: "default_volume",
-            description: "Default player volume when Lagukan joins a voice channel",
+            description: "Default player volume when 666 MUSIC joins a voice channel",
             type: ApplicationCommandOptionType.Integer,
             min_value: minVolume,
             max_value: maxVolume,
@@ -71,7 +71,7 @@ module.exports = {
         const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
         if (!deferred) return;
 
-        const botName = client.config.botName || "Lagukan";
+        const botName = client.config.botName || "666 MUSIC";
         const embedColor = client.config.embedColor;
         const embed = new EmbedBuilder().setColor(embedColor);
 

@@ -165,7 +165,7 @@ export default function App() {
                             <Music size={21} color="#c084fc" />
                         </div>
                         <div>
-                            <span className="brand-title">LAGUKAN INSTALLER</span>
+                            <span className="brand-title">666 MUSIC INSTALLER</span>
                             <span className="brand-sub">Your Music Bot, One Step Away.</span>
                         </div>
                     </button>
@@ -243,7 +243,7 @@ export default function App() {
             {/* Footer */}
             <footer className="site-footer">
                 <div className="container">
-                    <strong>LAGUKAN INSTALLER</strong> — Your Music Bot, One Step Away. • Repository Resmi:{" "}
+                    <strong>666 MUSIC INSTALLER</strong> — Your Music Bot, One Step Away. • Repository Resmi:{" "}
                     <a href="https://github.com/HOOOOOOQ/Lagukan" target="_blank" rel="noreferrer">
                         HOOOOOOQ/Lagukan
                     </a>

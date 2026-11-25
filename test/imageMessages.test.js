@@ -15,7 +15,7 @@ test("renders content and embed as PNG while preserving components", async () =>
     assert.deepEqual(result.embeds, []);
     assert.equal(result.components, components);
     assert.equal(result.files.length, 1);
-    assert.equal(result.files[0].name, "lagukan-response-1.png");
+    assert.equal(result.files[0].name, "666-music-response-1.png");
     assert.equal(result.files[0].attachment.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
     assert.ok(extractLines({ embeds: [embed] }).includes("@listener joined Music Voice"));
 });
@@ -48,6 +48,7 @@ test("edits replace generated card without deleting other image attachments", as
     const existing = {
         attachments: new Map([
             ["1", { id: "1", name: "lagukan-response-1.png" }],
+            ["3", { id: "3", name: "666-music-response-1.png" }],
             ["2", { id: "2", name: "cover.png" }],
         ]),
     };
@@ -248,7 +249,7 @@ test("dashboard refresh updates playback snapshot while retaining unrelated file
     const converted = await toImagePayload(calls[0], { edit: true, message });
     assert.deepEqual(converted.attachments, [{ id: "2" }]);
     assert.equal(converted.files.length, 1);
-    assert.equal(converted.files[0].name, "lagukan-response-1.png");
+    assert.equal(converted.files[0].name, "666-music-response-1.png");
     assert.match(converted.files[0].description, /Song/);
     assert.match(converted.files[0].description, /Elapsed \/ Remaining/);
     assert.ok(converted.components.length > 0);
@@ -493,7 +494,7 @@ test("now playing image and metadata become one attachment on send and edit", as
     const input = { embeds: [embed], files: [new AttachmentBuilder(image, { name: "666-nowplaying.png" })], components };
     const sent = await toImagePayload(input);
     assert.equal(sent.files.length, 1);
-    assert.equal(sent.files[0].name, "lagukan-response-1.png");
+    assert.equal(sent.files[0].name, "666-music-response-1.png");
     assert.equal(sent.embeds.length, 0);
     assert.equal(sent.components, components);
     assert.match(sent.files[0].description, /Song title/);

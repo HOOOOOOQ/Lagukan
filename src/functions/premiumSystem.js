@@ -10,7 +10,7 @@ const STANDARD_LIMITS = {
 
 const TIER_LIMITS = {
     plus: {
-        label: "Lagukan Plus",
+        label: "666 MUSIC Plus",
         badge: "✨ Plus",
         maxPlaylists: 60,
         maxTracksPerPlaylist: 600,
@@ -18,7 +18,7 @@ const TIER_LIMITS = {
         wrappedTopTracksLimit: 10,
     },
     vip: {
-        label: "Lagukan VIP",
+        label: "666 MUSIC VIP",
         badge: "💎 VIP",
         maxPlaylists: 100,
         maxTracksPerPlaylist: 1000,
@@ -26,7 +26,7 @@ const TIER_LIMITS = {
         wrappedTopTracksLimit: 10,
     },
     ultimate: {
-        label: "Lagukan Ultimate",
+        label: "666 MUSIC Ultimate",
         badge: "👑 Ultimate",
         maxPlaylists: 150,
         maxTracksPerPlaylist: 1500,

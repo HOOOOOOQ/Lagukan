@@ -9,7 +9,7 @@ const lodash = require("lodash");
 
 module.exports = {
     name: "queue",
-    description: "View or manage the Lagukan music queue (move or skip to position)",
+    description: "View or manage the 666 MUSIC queue (move or skip to position)",
     category: "music",
     options: [
         {
@@ -45,7 +45,7 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction, player) => {
-        const botName = client.config.botName || "Lagukan";
+        const botName = client.config.botName || "666 MUSIC";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
         const moveFrom = interaction.options.getInteger("move_from");

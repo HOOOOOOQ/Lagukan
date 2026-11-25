@@ -3,7 +3,7 @@ require("dotenv").config({ path: "./.env", quiet: true });
 
 module.exports = {
     // GENERAL DETAILS
-    botName: process.env.BOT_NAME || "Lagukan", // Discord bot name
+    botName: process.env.BOT_NAME || "666 MUSIC", // Discord bot name
     token: process.env.TOKEN || " ", // your bot token
     dev: [" "], // your Discord user Id & developer user Id
     embedColor: process.env.EMBED_COLOR || "5865F2", // your embeded hex color

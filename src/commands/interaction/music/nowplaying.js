@@ -8,7 +8,7 @@ const { safeDeferReply, safeEditReply } = require("../../../functions/interactio
 
 module.exports = {
     name: "nowplaying",
-    description: "Display the Lagukan Now Playing dashboard and song progress",
+    description: "Display the 666 MUSIC Now Playing dashboard and song progress",
     category: "music",
     options: [
         {

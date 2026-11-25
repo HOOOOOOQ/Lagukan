@@ -11,7 +11,7 @@ const { safeDeferReply, safeEditReply } = require("../../../functions/interactio
 
 module.exports = {
     name: "voicelog",
-    description: "Configure Lagukan Voice Channel Activity Logger for this server",
+    description: "Configure 666 MUSIC Voice Channel Activity Logger for this server",
     category: "setting",
     options: [
         {
@@ -60,7 +60,7 @@ module.exports = {
                 .setDescription(
                     `Timezone \`${timezoneOpt}\` tidak valid.\nGunakan format IANA seperti \`Asia/Jakarta\` (WIB), \`Asia/Makassar\` (WITA), atau \`Asia/Jayapura\` (WIT).`,
                 )
-                .setFooter({ text: "LAGUKAN VOICE SYSTEM", iconURL: botIconUrl });
+                .setFooter({ text: "666 MUSIC VOICE SYSTEM", iconURL: botIconUrl });
 
             return safeEditReply(interaction, { embeds: [errEmbed] });
         }
@@ -98,7 +98,7 @@ module.exports = {
         const activeVoiceId = getBotVoiceChannelId(client, guild);
         const targetDisplay = activeVoiceId
             ? `<#${activeVoiceId}> *(Voice Channel Chat)*`
-            : "`Auto (Active Voice Channel Chat when Lagukan joins)`";
+            : "`Auto (Active Voice Channel Chat when 666 MUSIC joins)`";
         const statusDisplay = resolved.enabled ? "🟢 `ENABLED`" : "🔴 `DISABLED`";
         const previewTime = formatVoiceTime(new Date(), resolved.timezone);
 
@@ -113,7 +113,7 @@ module.exports = {
                     `**Config Source:** \`${resolved.isCommandOverride ? "Server MongoDB" : ".env Default"}\``,
                 ].join("\n\n"),
             )
-            .setFooter({ text: "LAGUKAN VOICE SYSTEM", iconURL: botIconUrl })
+            .setFooter({ text: "666 MUSIC VOICE SYSTEM", iconURL: botIconUrl })
             .setTimestamp();
 
         return safeEditReply(interaction, { embeds: [embed] });

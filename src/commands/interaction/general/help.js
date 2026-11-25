@@ -14,7 +14,7 @@ const COMMANDS_PER_PAGE = 4;
 const COLLECTOR_TIMEOUT_MS = 5 * 60 * 1000;
 
 function buildHomeEmbed(client, interaction, allDocs) {
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.config.botName || "666 MUSIC";
     const iconUrl = client.user?.displayAvatarURL?.() || undefined;
     const requesterLabel = interaction.member || `<@${interaction.user.id}>`;
 
@@ -88,7 +88,7 @@ function buildHomeEmbed(client, interaction, allDocs) {
 }
 
 function buildSectionEmbed(client, sectionKey, pageIndex, allDocs) {
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.config.botName || "666 MUSIC";
     const iconUrl = client.user?.displayAvatarURL?.() || undefined;
 
     const meta = sectionKey === "music_settings_only" ? HELP_CATEGORIES.settings : HELP_CATEGORIES[sectionKey] || HELP_CATEGORIES.music;
@@ -117,7 +117,7 @@ function buildSectionEmbed(client, sectionKey, pageIndex, allDocs) {
 }
 
 function buildSingleCommandEmbed(client, doc) {
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.config.botName || "666 MUSIC";
     const iconUrl = client.user?.displayAvatarURL?.() || undefined;
     const catMeta = HELP_CATEGORIES[doc.categoryKey] || HELP_CATEGORIES.music;
     const cmdDisplay = `/${doc.name}`;
@@ -309,7 +309,7 @@ function buildHelpComponents(client, state, allDocs) {
 
 module.exports = {
     name: "help",
-    description: "Buka pusat bantuan interaktif lengkap untuk seluruh slash command Lagukan",
+    description: "Buka pusat bantuan interaktif lengkap untuk seluruh slash command 666 MUSIC",
     category: "general",
     options: [
         {

@@ -4,7 +4,7 @@ const { safeReply, safeDeferReply } = require("../../../functions/interactionRes
 
 module.exports = {
     name: "loop",
-    description: "Toggle Lagukan loop mode (off, song, or queue)",
+    description: "Toggle 666 MUSIC loop mode (off, song, or queue)",
     category: "music",
     options: [
         {

@@ -93,7 +93,7 @@ module.exports = {
     run: async (client, interaction) => {
         const sub = interaction.options.getSubcommand();
         const embedColor = client.config.embedColor;
-        const botName = client.config.botName || "Lagukan";
+        const botName = client.config.botName || "666 MUSIC";
         const embed = new EmbedBuilder().setColor(embedColor);
 
         if (sub === "add") {

@@ -4,7 +4,7 @@ const { safeReply, safeDeferReply } = require("../../../functions/interactionRes
 
 module.exports = {
     name: "shuffle",
-    description: "Shuffle the Lagukan music queue",
+    description: "Shuffle the 666 MUSIC music queue",
     category: "music",
     permissions: {
         bot: [],

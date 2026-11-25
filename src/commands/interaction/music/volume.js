@@ -6,7 +6,7 @@ const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions
 
 module.exports = {
     name: "volume",
-    description: "Set the Lagukan player volume",
+    description: "Set the 666 MUSIC player volume",
     category: "music",
     options: [
         {

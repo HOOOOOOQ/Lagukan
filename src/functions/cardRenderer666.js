@@ -302,7 +302,7 @@ async function renderSvgToPngBuffer(svg, cacheKey, ttlMs = 30_000) {
  */
 async function renderNowPlayingCard666({
     botId = "bot",
-    botName = "LAGUKAN 666",
+    botName = "666 MUSIC",
     trackKey = "",
     title = "Unknown Title",
     author = "Unknown Artist",

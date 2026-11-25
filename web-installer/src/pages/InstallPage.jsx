@@ -20,7 +20,7 @@ import { registerNewInstallation, verifyDiscordTokenSecure, testAuthenticatedClo
 export const STAGE_LABELS = [
     { key: "env_check", label: "1. Cek Lingkungan Termux" },
     { key: "deps_check", label: "2. Node.js, Git & FFmpeg" },
-    { key: "repo_clone", label: "3. Clone Repo Lagukan" },
+    { key: "repo_clone", label: "3. Clone Repo 666 MUSIC" },
     { key: "npm_deps", label: "4. Install Dependencies" },
     { key: "config_setup", label: "5. Konfigurasi Cloud .env" },
     { key: "token_verify", label: "6. Validasi Discord Token" },
@@ -162,9 +162,9 @@ export default function InstallPage({
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10 }}>
                     <div>
                         <span className="badge badge-purple">Panduan & Wizard Instalasi Termux</span>
-                        <h1 style={{ fontSize: "1.45rem", fontWeight: 900, marginTop: 6 }}>Instalasi Lagukan di Termux Android</h1>
+                        <h1 style={{ fontSize: "1.45rem", fontWeight: 900, marginTop: 6 }}>Instalasi 666 MUSIC di Termux Android</h1>
                         <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)" }}>
-                            Ikuti langkah otomatis di bawah ini. Seluruh penyimpanan database terhubung aman ke Cloud pusat milik Lagukan
+                            Ikuti langkah otomatis di bawah ini. Seluruh penyimpanan database terhubung aman ke Cloud pusat milik 666 MUSIC
                             tanpa perlu mengisi MongoDB URI.
                         </p>
                     </div>
@@ -485,7 +485,7 @@ export default function InstallPage({
                         <h2 style={{ fontSize: "1.05rem", fontWeight: 800 }}>Langkah 5 • Pengujian Koneksi Cloud API</h2>
                     </div>
                     <p style={{ fontSize: "0.84rem", color: "var(--text-secondary)", marginBottom: 12 }}>
-                        Pastikan perangkat Anda dapat berkomunikasi dengan <strong>Lagukan Cloud Database Gateway</strong> dan isolasi
+                        Pastikan perangkat Anda dapat berkomunikasi dengan <strong>666 MUSIC Cloud Database Gateway</strong> dan isolasi
                         tenant <code>installationId</code> berjalan optimal.
                     </p>
 
@@ -529,7 +529,7 @@ export default function InstallPage({
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <span className="badge badge-ok">Langkah 6 • Menjalankan Bot</span>
-                        <h2 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Nyalakan Lagukan di Termux</h2>
+                        <h2 style={{ fontSize: "1.1rem", fontWeight: 800 }}>Nyalakan 666 MUSIC di Termux</h2>
                     </div>
                     <button type="button" className="btn btn-secondary btn-sm" onClick={() => onNavigate("dashboard")}>
                         Pantau Status di Dashboard →

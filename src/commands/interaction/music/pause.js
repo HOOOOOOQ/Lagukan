@@ -4,7 +4,7 @@ const { safeReply, safeDeferReply } = require("../../../functions/interactionRes
 
 module.exports = {
     name: "pause",
-    description: "Pause the current song in Lagukan player",
+    description: "Pause the current song in 666 MUSIC player",
     category: "music",
     permissions: {
         bot: [],

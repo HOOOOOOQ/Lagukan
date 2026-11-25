@@ -311,17 +311,17 @@ async function connectCloudDatabase(client) {
         if (res?.data?.ok) {
             cloudReadyState = true;
             client.isCloudDbConnected = true;
-            Logger.info(`Connected to Lagukan Cloud Database Gateway (Installation: ${cfg.installationId})`);
+            Logger.info(`Connected to 666 MUSIC Cloud Database Gateway (Installation: ${cfg.installationId})`);
         } else {
             cloudReadyState = false;
             client.isCloudDbConnected = false;
-            Logger.error("Lagukan Cloud Database Gateway menolak koneksi: periksa LAGUKAN_INSTALL_ID dan LAGUKAN_API_KEY Anda.");
+            Logger.error("666 MUSIC Cloud Database Gateway menolak koneksi: periksa LAGUKAN_INSTALL_ID dan LAGUKAN_API_KEY Anda.");
         }
     } catch (err) {
         cloudReadyState = false;
         client.isCloudDbConnected = false;
         const safeMsg = err?.response?.data?.error || err?.message || "Unknown network error";
-        Logger.error(`Gagal menghubungi Lagukan Cloud Database Gateway (${cfg.apiUrl}): ${safeMsg}`);
+        Logger.error(`Gagal menghubungi 666 MUSIC Cloud Database Gateway (${cfg.apiUrl}): ${safeMsg}`);
     }
 
     startCloudHeartbeat(client, httpClient);

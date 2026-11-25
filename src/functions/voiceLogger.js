@@ -6,7 +6,7 @@ const { nativeMessagePayload } = require("./imageMessageRenderer.js");
 const COLORS = {
     JOINED: 0x22c55e, // Green
     LEAVING: 0xef4444, // Red
-    SYSTEM: 0x4f46e5, // Lagukan Electric Indigo
+    SYSTEM: 0x4f46e5, // 666 MUSIC Electric Indigo
 };
 
 const DEDUP_WINDOW_MS = 2000;
@@ -238,7 +238,7 @@ function buildVoiceActivityEmbed(client, { type, member, user, channelName, time
             ].join("\n"),
         )
         .setFooter({
-            text: "LAGUKAN VOICE SYSTEM",
+            text: "666 MUSIC VOICE SYSTEM",
             iconURL: botIconUrl || undefined,
         })
         .setTimestamp();
