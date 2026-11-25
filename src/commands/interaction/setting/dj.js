@@ -46,7 +46,7 @@ module.exports = {
         const deferred = await safeDeferReply(interaction, { flags: MessageFlags.Ephemeral });
         if (!deferred) return;
 
-        const botName = client.config.botName || "Lagukan";
+        const botName = client.config.botName || "666 MUSIC";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
 
         const modeOpt = interaction.options.getString("mode");

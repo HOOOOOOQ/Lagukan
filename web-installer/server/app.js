@@ -212,7 +212,7 @@ function createInstallerApp() {
 
             return res.json({
                 ok: true,
-                brand: "LAGUKAN INSTALLER",
+                brand: "666 MUSIC INSTALLER",
                 tagline: "Your Music Bot, One Step Away.",
                 installerService: "operational",
                 lagukanVersion: process.env.LAGUKAN_BOT_VERSION || "3.1.0",

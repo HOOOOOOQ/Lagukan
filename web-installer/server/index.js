@@ -11,12 +11,12 @@ async function startServer() {
 
     const server = app.listen(PORT, HOST, () => {
         console.log(
-            `[LAGUKAN INSTALLER] Server listening on http://${HOST}:${PORT} | Central DB Mode: ${dbState.mode} (connected=${dbState.connected})`,
+            `[666 MUSIC INSTALLER] Server listening on http://${HOST}:${PORT} | Central DB Mode: ${dbState.mode} (connected=${dbState.connected})`,
         );
     });
 
     server.on("error", (err) => {
-        console.error("[LAGUKAN INSTALLER] Server error:", redactSecretsFromText(err?.message || err));
+        console.error("[666 MUSIC INSTALLER] Server error:", redactSecretsFromText(err?.message || err));
         process.exit(1);
     });
 }

@@ -173,7 +173,7 @@ module.exports = {
                     .setTitle("📻 Radio Mode & Auto DJ Aktif!")
                     .setDescription(
                         `Stasiun **${res.state.label}** berhasil dinyalakan di <#${player.voiceId || voiceChannel.id}>!\n` +
-                            `Setiap kali antrean selesai, Lagukan otomatis memverifikasi source yang dapat diputar dan menghindari pengulangan 30 lagu terakhir.\n\n` +
+                            `Setiap kali antrean selesai, 666 MUSIC otomatis memverifikasi source yang dapat diputar dan menghindari pengulangan 30 lagu terakhir.\n\n` +
                             `*Gunakan \`/radio stop\` kapan saja untuk mematikan Radio Mode.*`,
                     ),
             ],

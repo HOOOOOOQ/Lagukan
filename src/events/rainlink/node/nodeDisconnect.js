@@ -9,7 +9,7 @@ module.exports = (client, node, code, reason) => {
         userId: "-",
         command: "nodeDisconnect",
         playerStatus: "-",
-        nodeStatus: `${node?.options?.name || "Lavalink"}(code=${code ?? "unknown"})`,
+        nodeStatus: `${node?.options?.name || "Lavalink"}(code=${code ?? "unknown"}, connectedMs=${node?._lagukanLastConnectionDurationMs ?? "unknown"})`,
         errorMessage: desc || "WebSocket disconnected",
     });
 };

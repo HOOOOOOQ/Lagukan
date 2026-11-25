@@ -3,7 +3,7 @@ const { safeReply } = require("../../../functions/interactionResponder.js");
 
 module.exports = {
     name: "ping",
-    description: "Get Lagukan's ping",
+    description: "Get 666 MUSIC's ping",
     category: "general",
     permissions: {
         bot: [],
@@ -16,7 +16,7 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction) => {
-        const botName = client.config.botName || "Lagukan";
+        const botName = client.config.botName || "666 MUSIC";
         const embed = new EmbedBuilder()
             .setColor(client.config.embedColor)
             .setDescription(`🏓 **${botName}** Pong! \`${Math.round(client.ws.ping)}ms\`.`);

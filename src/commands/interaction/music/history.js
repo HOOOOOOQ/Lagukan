@@ -55,7 +55,7 @@ module.exports = {
     },
     devOnly: false,
     run: async (client, interaction) => {
-        const botName = client.config.botName || "Lagukan";
+        const botName = client.config.botName || "666 MUSIC";
         const embedColor = client.config.embedColor;
         const embed = new EmbedBuilder().setColor(embedColor);
 

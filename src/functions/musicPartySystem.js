@@ -243,7 +243,7 @@ async function closePartySession(client, { guild, requesterId, hasManageGuild = 
 }
 
 function buildPartyEmbed(client, party) {
-    const botName = client.config?.botName || "Lagukan";
+    const botName = client.config?.botName || "666 MUSIC";
     const color = client.config?.embedColor || "#5865F2";
     const player = getGuildPlayer(client, party.guildId);
     const current = player?.queue?.current || null;

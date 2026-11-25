@@ -2,7 +2,7 @@
     "name": "lagukan-web-installer",
     "version": "1.0.0",
     "private": true,
-    "description": "Official Termux Web Installer & Central Cloud Database Gateway for Lagukan Discord Music Bot",
+    "description": "Official Termux Web Installer & Central Cloud Database Gateway for 666 MUSIC",
     "main": "server/index.js",
     "engines": {
         "node": ">=18.0.0"

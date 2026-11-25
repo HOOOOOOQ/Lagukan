@@ -341,7 +341,7 @@ const COMMAND_DOCS = [
     {
         name: "musicprofile",
         categoryKey: "profile",
-        func: "Menampilkan Kartu Profil Musik Lagukan lengkap (Level, XP, Waktu Dengar, Top Lagu/Artis, & 5 tombol interaktif).",
+        func: "Menampilkan Kartu Profil Musik 666 MUSIC lengkap (Level, XP, Waktu Dengar, Top Lagu/Artis, & 5 tombol interaktif).",
         usage: "/musicprofile [user:@User]",
         params: "Opsional: `user` (anggota yang ingin dilihat profil musiknya)",
         example: "/musicprofile • /musicprofile user:@Teman",
@@ -496,7 +496,7 @@ const COMMAND_DOCS = [
         func: "Melihat status & kuota akses Premium terverifikasi, kustomisasi warna/judul dashboard server, & kelola akses.",
         usage: "/premium <status|customize|grant|revoke> ...",
         params: "Subcommand wajib: `status`, `customize [accent_color] [dashboard_title]`, `grant` (Dev), `revoke` (Dev)",
-        example: "/premium status • /premium customize accent_color:#00E5FF dashboard_title:Lagukan VIP",
+        example: "/premium status • /premium customize accent_color:#00E5FF dashboard_title:666 MUSIC VIP",
         permission: "Semua anggota untuk `status`; `Manage Server` untuk `customize`; Owner/Dev Bot untuk `grant`/`revoke`",
         limits: "Dikelola secara resmi oleh Admin/Developer Bot tanpa klaim atau pembayaran otomatis palsu.",
     },

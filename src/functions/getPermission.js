@@ -29,7 +29,7 @@ function resolveMemberPermissions(response) {
 
 module.exports = {
     permissions: async (client, response, command, args) => {
-        const botName = client.config.botName || "Lagukan";
+        const botName = client.config.botName || "666 MUSIC";
         const embed = new EmbedBuilder().setColor(client.config.embedColor);
         const userId = response.user?.id || response.author?.id;
 

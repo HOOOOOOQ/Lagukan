@@ -85,7 +85,7 @@ module.exports = {
 
         const sub = interaction.options.getSubcommand();
         const voiceChannel = interaction.options.getChannel("voice_channel");
-        const botName = client.user?.username || "Lagukan 666";
+        const botName = client.user?.username || "666 MUSIC";
 
         if (sub === "setup") {
             const fallbackChannel = interaction.options.getChannel("fallback_channel") || null;

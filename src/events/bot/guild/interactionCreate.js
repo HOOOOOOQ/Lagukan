@@ -92,7 +92,7 @@ module.exports = async (client, interaction) => {
             flags: MessageFlags.Ephemeral,
         });
 
-    const botName = client.user?.username || client.config.botName || "Lagukan";
+    const botName = client.user?.username || client.config.botName || "666 MUSIC";
     const userData = client.data.get(`userData_${interaction.user.id}`);
     const embed = new EmbedBuilder().setColor(client.config.embedColor);
     const supportComponents = buildSupportComponents(client, "Support Server");

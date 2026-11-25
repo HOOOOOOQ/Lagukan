@@ -14,7 +14,7 @@ services:
         restart: unless-stopped
         environment:
             # General Configuration
-            - BOT_NAME=${BOT_NAME:-Lagukan}
+            - BOT_NAME=${BOT_NAME:-666 MUSIC}
             - TOKEN=${TOKEN}
             - PREFIX=${PREFIX:-!}
             - EMBED_COLOR=${EMBED_COLOR:-5865F2}

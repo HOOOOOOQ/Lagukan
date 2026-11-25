@@ -1,15 +1,15 @@
-# LAGUKAN INSTALLER — Official Web Installer & Central Cloud Database Gateway
+# 666 MUSIC INSTALLER — Official Web Installer & Central Cloud Database Gateway
 
 > **Tagline:** _Your Music Bot, One Step Away._  
 > **Repository Bot Resmi:** [https://github.com/HOOOOOOQ/Lagukan](https://github.com/HOOOOOOQ/Lagukan)
 
-Website resmi untuk menginstal, mengonfigurasi, dan memantau Discord Music Bot **Lagukan** di **Android Termux** dengan satu perintah, terhubung secara aman ke **MongoDB Atlas pusat** milik pemilik project tanpa pernah mengekspos kredensial database kepada pengguna.
+Website resmi untuk menginstal, mengonfigurasi, dan memantau Discord Music Bot **666 MUSIC** di **Android Termux** dengan satu perintah, terhubung secara aman ke **MongoDB Atlas pusat** milik pemilik project tanpa pernah mengekspos kredensial database kepada pengguna.
 
 ---
 
 ## 1. Arsitektur Keamanan & Isolasi Database Pusat
 
-Hasil audit arsitektur **Lagukan** menunjukkan bahwa bot menggunakan **16 koleksi Mongoose** (`guild`, `user`, `playlist`, `UserMusicProfiles`, `ListeningHistory`, `FavoriteTracks`, `UserPlaylists`, `MusicStatistics`, `MusicWrapped`, `MusicLeaderboard`, `MusicRequestConfig`, `DJConfig`, `MusicParty`, `GuessTheSong`, `MusicBattle`, `PremiumConfig`).
+Hasil audit arsitektur **666 MUSIC** menunjukkan bahwa bot menggunakan **16 koleksi Mongoose** (`guild`, `user`, `playlist`, `UserMusicProfiles`, `ListeningHistory`, `FavoriteTracks`, `UserPlaylists`, `MusicStatistics`, `MusicWrapped`, `MusicLeaderboard`, `MusicRequestConfig`, `DJConfig`, `MusicParty`, `GuessTheSong`, `MusicBattle`, `PremiumConfig`).
 
 Agar pemilik project memegang kendali penuh atas database pusat:
 
@@ -23,7 +23,7 @@ Agar pemilik project memegang kendali penuh atas database pusat:
 3. **Perlindungan Berlapis**:
     - **Blokir Kredensial pada URL**: Middleware menolak otomatis setiap permintaan yang menaruh `token`, `apiKey`, `mongoUri`, atau pola Discord Bot Token di query/path URL.
     - **Validasi Discord Token Tanpa Penyimpanan**: Endpoint `POST /api/v1/verify-token` memeriksa struktur Snowflake & kriptografi token (serta verifikasi live ke Discord API `/users/@me`) tanpa pernah mencatat token di log maupun menyimpannya ke database. Di Termux, token hanya disimpan lokal di `~/Lagukan/.env` dengan permission ketat `chmod 600`.
-    - **Sanitasi Query & Allowlist Model**: Memblokir operator berbahaya (`$where`, `$function`, `$accumulator`, `$expr`, `$lookup`, `$out`, `$merge`, prototype pollution) dan hanya mengizinkan 21 model resmi Lagukan.
+    - **Sanitasi Query & Allowlist Model**: Memblokir operator berbahaya (`$where`, `$function`, `$accumulator`, `$expr`, `$lookup`, `$out`, `$merge`, prototype pollution) dan hanya mengizinkan 21 model resmi 666 MUSIC.
     - **Autentikasi Dashboard `HttpOnly` + Rate Limit**: Sesi dashboard ditandatangani dengan `HMAC-SHA256`, disimpan pada cookie `HttpOnly`, dan memblokir percobaan akses silang antar-`installationId` (`403 Forbidden`). Tidak ada endpoint eksekusi shell di server.
     - **Kompatibilitas Mundur 100%**: Pemilik/pengguna VPS yang tetap mengisi `MONGO_URI` langsung pada bot tetap terhubung langsung ke Mongoose seperti semula.
 

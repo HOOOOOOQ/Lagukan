@@ -1,8 +1,8 @@
 <p align="center">
-<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&height=200&section=header&text=LAGUKAN&fontSize=80&fontAlignY=35&animation=twinkling&fontColor=gradient"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&color=gradient&height=200&section=header&text=666%20MUSIC&fontSize=80&fontAlignY=35&animation=twinkling&fontColor=gradient"/>
 </p>
 
-<h1 align="center">Lagukan Music Bot</h1>
+<h1 align="center">666 MUSIC</h1>
 
 <p align="center">
   Shard-ready Discord music bot powered by Rainlink, Lavalink, and Discord.js v14.
@@ -56,7 +56,7 @@ Copy-Item .env.example .env
 3. Fill all required keys in `.env` (`TOKEN`, `MONGO_URI`, Lavalink connection values, etc).
 4. Add your dev ID in `src/settings/config.js`.
 5. Start MongoDB + Lavalink.
-6. Run **Lagukan Music Bot**:
+6. Run **666 MUSIC**:
 
 ```bash
 npm start
@@ -110,18 +110,18 @@ Create a `.env` file from `.env.example`.
 
 ### General
 
-| Key                  | Default   | Purpose                                   |
-| -------------------- | --------- | ----------------------------------------- |
-| `BOT_NAME`           | `Lagukan` | Discord bot name                          |
-| `TOKEN`              | -         | Discord bot token                         |
-| `EMBED_COLOR`        | `5865F2`  | Embed hex color (without `#`)             |
-| `LEAVE_TIMEOUT`      | `60000`   | Inactivity timeout before leaving VC (ms) |
-| `DEFAULT_VOLUME`     | `100`     | Initial player volume                     |
-| `MIN_VOLUME`         | `1`       | Minimum volume                            |
-| `MAX_VOLUME`         | `100`     | Maximum volume                            |
-| `MONGO_URI`          | -         | MongoDB connection string                 |
-| `SUPPORT_SERVER_URL` | -         | Support button URL                        |
-| `DEBUG`              | `false`   | Enable debug logs when `true`             |
+| Key                  | Default     | Purpose                                   |
+| -------------------- | ----------- | ----------------------------------------- |
+| `BOT_NAME`           | `666 MUSIC` | Discord bot name                          |
+| `TOKEN`              | -           | Discord bot token                         |
+| `EMBED_COLOR`        | `5865F2`    | Embed hex color (without `#`)             |
+| `LEAVE_TIMEOUT`      | `60000`     | Inactivity timeout before leaving VC (ms) |
+| `DEFAULT_VOLUME`     | `100`       | Initial player volume                     |
+| `MIN_VOLUME`         | `1`         | Minimum volume                            |
+| `MAX_VOLUME`         | `100`       | Maximum volume                            |
+| `MONGO_URI`          | -           | MongoDB connection string                 |
+| `SUPPORT_SERVER_URL` | -           | Support button URL                        |
+| `DEBUG`              | `false`     | Enable debug logs when `true`             |
 
 ### Voice Activity Logger
 
@@ -216,7 +216,7 @@ Copy-Item .env.example .env
 4. Fill all required keys in `.env`
 5. Configure developer IDs in `src/settings/config.js`
 6. Start Lavalink + MongoDB
-7. Start **Lagukan Music Bot**:
+7. Start **666 MUSIC**:
 
 ```bash
 npm start
@@ -226,8 +226,8 @@ npm start
 
 This repository includes:
 
-- `Dockerfile` for the Lagukan bot image
-- `docker-compose.yml` for Lagukan bot + MongoDB
+- `Dockerfile` for the 666 MUSIC bot image
+- `docker-compose.yml` for 666 MUSIC bot + MongoDB
 
 ### Important
 
@@ -252,7 +252,7 @@ The bot shows the playing track in its voice channel status and updates it when 
 
 ## `🔐` Permissions Needed
 
-At minimum, ensure **Lagukan** can:
+At minimum, ensure **666 MUSIC** can:
 
 - `ViewChannel`
 - `SendMessages`
@@ -277,7 +277,7 @@ For stage channels, also allow:
 
 ## 💖 Support the Project
 
-If you find **Lagukan Music Bot** useful, consider starring the repository and supporting continued development:
+If you find **666 MUSIC** useful, consider starring the repository and supporting continued development:
 
 <p align="center">
   <a href="https://github.com/HOOOOOOQ/Lagukan">
@@ -309,8 +309,8 @@ This project is licensed under the [MIT License](https://github.com/HOOOOOOQ/Lag
 ---
 
 <p align="center">
-  <b>Lagukan Music Bot</b><br/>
-  <sub>Lagukan Music Bot • Built for Excellence</sub>
+  <b>666 MUSIC</b><br/>
+  <sub>666 MUSIC • Built for Excellence</sub>
 </p>
 
 <p align="center">
@@ -337,7 +337,7 @@ This project is licensed under the [MIT License](https://github.com/HOOOOOOQ/Lag
 
 ### Automatic 24/7 voice
 
-Existing enabled `Auto247Config` records are retained and loaded by bot application ID and guild ID. To provision a new bot, set `AUTO247_CHANNELS` in **that bot's** environment to a JSON object mapping guild IDs to voice channel IDs, for example `AUTO247_CHANNELS={"123456789012345678":"234567890123456789"}`. The bot stores these mappings in MongoDB with auto-reconnect enabled on startup. Each bot must use its own voice channel configuration. Remove or edit the corresponding database record to disable or change it; if the environment variable is still present, it provisions the record again on the next sync. MongoDB and the bot hosting process must remain available. Playback queues are not persisted across process restarts.
+Existing enabled `Auto247Config` records are retained and loaded by bot application ID and guild ID. To provision a new bot, set `AUTO247_CHANNELS` in **that bot's** environment to a JSON object mapping guild IDs to voice channel IDs, for example `AUTO247_CHANNELS={"123456789012345678":"234567890123456789"}`. The bot stores these mappings in MongoDB with auto-reconnect enabled on startup. Each bot must use its own voice channel configuration. Remove or edit the corresponding database record to disable or change it; if the environment variable is still present, it provisions the record again on the next sync. MongoDB and the bot hosting process must remain available. After fast 24/7 reconnect attempts fail, retries continue every 5 minutes; closed Lavalink nodes also retry in bounded bursts after a cooldown. Playback queues are not persisted across process restarts.
 
 ### Image-based Discord messages
 

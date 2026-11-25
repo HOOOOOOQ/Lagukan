@@ -118,7 +118,7 @@ async function handleLyricsCommand(client, interaction) {
     if (!deferred) return;
 
     const embedColor = client.config.embedColor;
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.config.botName || "666 MUSIC";
     const queryOpt = interaction.options?.getString?.("song")?.trim() || "";
     const player = getGuildPlayer(client, interaction.guildId);
     const currentTrack = player?.queue?.current || null;

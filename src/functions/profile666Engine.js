@@ -415,7 +415,7 @@ async function tryAtomicUnlockAchievement(client, { botApplicationId, guildId, u
 }
 
 function buildAchievementEmbed666(client, { username, userId, achievement }) {
-    const botName = client?.user?.username || "Lagukan 666";
+    const botName = client?.user?.username || "666 MUSIC";
     return new EmbedBuilder()
         .setColor(THEME_666.embedMagenta)
         .setAuthor({

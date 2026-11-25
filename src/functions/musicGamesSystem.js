@@ -291,7 +291,7 @@ async function getGuessTheSongLeaderboard(client, guildId) {
 
 function buildBattlePayload(client, battle) {
     const color = client.config?.embedColor || "#5865F2";
-    const botName = client.config?.botName || "Lagukan";
+    const botName = client.config?.botName || "666 MUSIC";
 
     if (battle.phase === "submission") {
         const embed = new EmbedBuilder()

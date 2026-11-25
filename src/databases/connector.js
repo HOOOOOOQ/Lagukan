@@ -6,7 +6,7 @@ module.exports = async (client) => {
     try {
         if (isCloudDatabaseMode(client)) {
             await connectCloudDatabase(client);
-            Logger.info("Database events loaded (Lagukan Cloud Gateway mode)");
+            Logger.info("Database events loaded (666 MUSIC Cloud Gateway mode)");
             if (client.isReady?.()) await require("../functions/auto247Manager.js").syncAllAuto247OnStartup(client);
             return;
         }

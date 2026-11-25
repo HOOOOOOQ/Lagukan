@@ -4,7 +4,7 @@ const { safeReply, safeDeferReply } = require("../../../functions/interactionRes
 
 module.exports = {
     name: "remove",
-    description: "Remove a song from the Lagukan queue",
+    description: "Remove a song from the 666 MUSIC queue",
     category: "music",
     options: [
         {

@@ -70,7 +70,7 @@ async function saveGuildRequestConfig(client, guildId, patch = {}) {
 }
 
 function buildRequestPanelPayload(client, guild, configDoc) {
-    const botName = client.config?.botName || "Lagukan";
+    const botName = client.config?.botName || "666 MUSIC";
     const iconUrl = client.user?.displayAvatarURL?.() || undefined;
     const color = client.config?.embedColor || "#5865F2";
     const player = getGuildPlayer(client, guild.id);

@@ -5,7 +5,7 @@ const { safeDeferReply, safeEditReply } = require("../../../functions/interactio
 
 module.exports = {
     name: "autoplay",
-    description: "Toggle Lagukan smart autoplay recommendations for this server",
+    description: "Toggle 666 MUSIC smart autoplay recommendations for this server",
     category: "setting",
     permissions: {
         bot: [],

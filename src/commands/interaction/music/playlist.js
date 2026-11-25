@@ -221,7 +221,7 @@ module.exports = {
         const sub = interaction.options.getSubcommand();
         const scope = interaction.options.getString("scope") || "personal";
         const embedColor = client.config.embedColor;
-        const botName = client.config.botName || "Lagukan";
+        const botName = client.config.botName || "666 MUSIC";
         const embed = new EmbedBuilder().setColor(embedColor);
 
         const isWriteAction = ["create", "rename", "add", "savequeue", "remove", "delete"].includes(sub);

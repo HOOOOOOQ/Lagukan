@@ -117,6 +117,7 @@ function patchRainlinkRuntime() {
             require("./sessionRecoveryManager.js").invalidateSession(this);
             this.online = false;
             this.state = NODE_STATE_DISCONNECTED;
+            this._lagukanLastConnectionDurationMs = this._lagukanOpenAt ? Math.max(0, Date.now() - this._lagukanOpenAt) : null;
             this.manager.emit("nodeDisconnect", this, code, reason);
             if (this.sudoDisconnect) {
                 this.state = NODE_STATE_CLOSED;
@@ -156,7 +157,9 @@ function patchRainlinkRuntime() {
         RainlinkWebsocket.prototype.close = function patchedWsClose(code, reason) {
             if (this.legacyWs) {
                 try {
-                    this.legacyWs.close(code ?? 1000, reason ?? "Self closed");
+                    // 1006 is a synthetic abnormal-closure code and cannot be sent on the wire.
+                    const closeCode = code === 1006 || code === 1005 || code === 1015 ? 1000 : (code ?? 1000);
+                    this.legacyWs.close(closeCode, reason ?? "Self closed");
                 } catch {}
                 return true;
             }
@@ -740,6 +743,15 @@ function installPlayerCreationGuard(client) {
     };
 }
 
+// Exhausting a retry burst is temporary: long outages get another bounded burst
+// after a cooldown, rather than leaving the node closed until process restart.
+function allowNodeRecoveryAttempt(metrics, now, maxAttempts, cooldownMs) {
+    if (metrics.recoveryAttempts < maxAttempts) return true;
+    if (now - (metrics.lastRecoveryAttemptAt || 0) < cooldownMs) return false;
+    metrics.recoveryAttempts = 0;
+    return true;
+}
+
 /**
  * Applies bounded reconnect limits, healthy node selection, Rainlink voice/REST hardening,
  * and periodic closed-node recovery at runtime without modifying `src/settings/config.js`.
@@ -786,10 +798,9 @@ function initializeNodeHealthManager(client) {
                 if (node.state === NODE_STATE_CLOSED) {
                     const key = getNodeKey(node);
                     const metrics = nodeHealthMetrics.get(node) || recordNodeEvent(node, "closed");
-                    if (metrics.recoveryAttempts >= maxCooldownRecoveries) {
-                        continue;
-                    }
+                    if (!allowNodeRecoveryAttempt(metrics, Date.now(), maxCooldownRecoveries, 10 * 60 * 1000)) continue;
                     metrics.recoveryAttempts += 1;
+                    metrics.lastRecoveryAttemptAt = Date.now();
                     nodeHealthMetrics.set(node, metrics);
 
                     Logger.warn(
@@ -815,6 +826,7 @@ function initializeNodeHealthManager(client) {
 patchRainlinkRuntime();
 
 module.exports = {
+    allowNodeRecoveryAttempt,
     NODE_STATE_CONNECTED,
     NODE_STATE_DISCONNECTED,
     NODE_STATE_CLOSED,

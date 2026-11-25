@@ -11,7 +11,8 @@ const {
     artworkBadge666,
 } = require("./visualTheme666.js");
 
-const NAME_PREFIX = "lagukan-response-";
+const NAME_PREFIX = "666-music-response-";
+const isResponseAttachment = (name) => [NAME_PREFIX, "lagukan-response-"].some((prefix) => String(name || "").startsWith(prefix));
 const MAX_LINES_PER_IMAGE = 38;
 const WRAP_WIDTH = 62;
 const MAX_AVATAR_CACHE_ENTRIES = 128;
@@ -516,9 +517,7 @@ async function renderSingleAttachedCard(payload, rows) {
 function retainedAttachments(message) {
     const attachments = message?.attachments;
     if (!attachments?.values) return [];
-    return [...attachments.values()]
-        .filter((file) => !String(file.name || "").startsWith(NAME_PREFIX))
-        .map((file) => ({ id: String(file.id) }));
+    return [...attachments.values()].filter((file) => !isResponseAttachment(file.name)).map((file) => ({ id: String(file.id) }));
 }
 
 // Mark only explicitly selected messages for native Discord rendering without adding API fields.
@@ -544,7 +543,7 @@ async function toImagePayload(input, { edit = false, message = null } = {}) {
         const obsoleteIds = new Set(
             message?.attachments?.values
                 ? [...message.attachments.values()]
-                      .filter((file) => CARD_ATTACHMENT_NAMES.has(file.name) || String(file.name || "").startsWith(NAME_PREFIX))
+                      .filter((file) => CARD_ATTACHMENT_NAMES.has(file.name) || isResponseAttachment(file.name))
                       .map((file) => String(file.id))
                 : [],
         );

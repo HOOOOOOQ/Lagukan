@@ -315,7 +315,7 @@ export default function DashboardPage({
 
                 <div className="card">
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                        <span style={{ fontSize: "0.82rem", color: "var(--text-secondary)", fontWeight: 600 }}>Versi Lagukan</span>
+                        <span style={{ fontSize: "0.82rem", color: "var(--text-secondary)", fontWeight: 600 }}>Versi 666 MUSIC</span>
                         <Tag size={16} color="#c084fc" />
                     </div>
                     <div style={{ fontSize: "1.18rem", fontWeight: 800 }}>v{activeInstallation.lagukanVersion || "3.1.0"}</div>
@@ -365,7 +365,7 @@ export default function DashboardPage({
                         <h2 style={{ fontSize: "1.06rem", fontWeight: 800 }}>Panduan Update Bot</h2>
                     </div>
                     <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-                        Perbarui Lagukan ke rilis terbaru dari GitHub tanpa menghapus file <code>.env</code> maupun data pengguna:
+                        Perbarui 666 MUSIC ke rilis terbaru dari GitHub tanpa menghapus file <code>.env</code> maupun data pengguna:
                     </p>
                     <div className="cmd-box">
                         <code className="cmd-text">{updateCommand}</code>
@@ -386,7 +386,7 @@ export default function DashboardPage({
                         <h2 style={{ fontSize: "1.06rem", fontWeight: 800 }}>Panduan Menjalankan Ulang Bot</h2>
                     </div>
                     <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)" }}>
-                        Hentikan proses lama dengan <code>Ctrl + C</code>, lalu nyalakan ulang Lagukan:
+                        Hentikan proses lama dengan <code>Ctrl + C</code>, lalu nyalakan ulang 666 MUSIC:
                     </p>
                     <div className="cmd-box">
                         <code className="cmd-text">{restartCommand}</code>

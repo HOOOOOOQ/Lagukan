@@ -80,7 +80,7 @@ function hasAnyPreviousTrack(client, player) {
  */
 function buildNowPlayingEmbed(client, player, trackOverride = null) {
     const premiumTheme = player?.guildId ? peekCachedGuildPremiumTheme(player.guildId) : null;
-    const botName = premiumTheme?.customDashboardTitle || client?.user?.username || client?.config?.botName || "Lagukan";
+    const botName = premiumTheme?.customDashboardTitle || client?.user?.username || client?.config?.botName || "666 MUSIC";
     const embedColor = premiumTheme?.customAccentColor || THEME_666.embedColor;
     const iconUrl = client?.user?.displayAvatarURL?.({ extension: "png", size: 128 }) || undefined;
     const track = trackOverride || player?.queue?.current;
@@ -373,7 +373,7 @@ async function cleanupNowPlayingMessage(player, deleteMessage = true) {
 
 // Rendering only: reuse the existing player snapshot and dashboard refresh schedule.
 async function renderDashboardCard(client, player, track) {
-    const botName = client?.user?.username || client?.config?.botName || "Lagukan 666";
+    const botName = client?.user?.username || client?.config?.botName || "666 MUSIC";
     const requesterName = track.requester
         ? track.requester.globalName || track.requester.username || String(track.requester.id || "Listener")
         : "Autoplay";
@@ -434,7 +434,11 @@ async function refreshNowPlayingDashboard(client, player, options = {}) {
             payload.files = [new AttachmentBuilder(card, { name: "666-nowplaying.png" })];
             if (message.attachments?.values) {
                 payload.attachments = [...message.attachments.values()]
-                    .filter((file) => file.name !== "666-nowplaying.png" && !String(file.name || "").startsWith("lagukan-response-"))
+                    .filter(
+                        (file) =>
+                            file.name !== "666-nowplaying.png" &&
+                            !["lagukan-response-", "666-music-response-"].some((prefix) => String(file.name || "").startsWith(prefix)),
+                    )
                     .map((file) => ({ id: String(file.id) }));
             }
         }
@@ -450,7 +454,7 @@ async function refreshNowPlayingDashboard(client, player, options = {}) {
 }
 
 function attachDashboardCollector(client, player, message) {
-    const botName = client?.config?.botName || "Lagukan";
+    const botName = client?.config?.botName || "666 MUSIC";
     const embedColor = client?.config?.embedColor || "#ff0051";
     const collector = message.createMessageComponentCollector();
     player._npCollector = collector;

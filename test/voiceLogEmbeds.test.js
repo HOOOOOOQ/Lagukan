@@ -57,7 +57,7 @@ test("joined and leaving logs go through the installed send wrapper as native em
             assert.match(embed.description, /Music Lounge/);
             assert.match(embed.description, /WIB/);
             assert.equal(embed.thumbnail.url, user.displayAvatarURL());
-            assert.equal(embed.footer.text, "LAGUKAN VOICE SYSTEM");
+            assert.equal(embed.footer.text, "666 MUSIC VOICE SYSTEM");
             assert.ok(embed.timestamp);
             assert.deepEqual(payload.allowedMentions, { parse: [] });
         }

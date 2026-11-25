@@ -4,7 +4,7 @@ const { safeReply, safeDeferReply } = require("../../../functions/interactionRes
 
 module.exports = {
     name: "stop",
-    description: "Stop the Lagukan music player and clear upcoming queue",
+    description: "Stop the 666 MUSIC music player and clear upcoming queue",
     category: "music",
     permissions: {
         bot: [],

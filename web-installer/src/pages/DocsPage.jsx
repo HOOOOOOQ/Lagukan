@@ -13,11 +13,11 @@ export default function DocsPage({ health, onCopyText, copiedKey, onNavigate }) 
             <section className="card" style={{ marginBottom: 20 }}>
                 <span className="badge badge-purple">Dokumentasi Resmi</span>
                 <h1 style={{ fontSize: "1.45rem", fontWeight: 900, marginTop: 6 }}>
-                    Panduan Lengkap Instalasi & Pengoperasian Lagukan di Termux
+                    Panduan Lengkap Instalasi & Pengoperasian 666 MUSIC di Termux
                 </h1>
                 <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", marginTop: 4 }}>
                     Semua yang perlu Anda ketahui mulai dari memasang aplikasi Termux di Android hingga menjalankan, memperbarui, dan
-                    mengatasi kendala pada bot musik Lagukan.
+                    mengatasi kendala pada bot musik 666 MUSIC.
                 </p>
             </section>
 
@@ -67,7 +67,7 @@ export default function DocsPage({ health, onCopyText, copiedKey, onNavigate }) 
                         onClick={() => onNavigate("install")}
                         style={{ background: "none", border: "none", color: "var(--purple-soft)", fontWeight: 700, cursor: "pointer" }}
                     >
-                        Install Lagukan
+                        Install 666 MUSIC
                     </button>{" "}
                     agar status setiap tahapan langsung terpantau dari browser HP.
                 </p>
@@ -115,14 +115,14 @@ export default function DocsPage({ health, onCopyText, copiedKey, onNavigate }) 
                 </ol>
             </section>
 
-            {/* 4. Cara Menjalankan Lagukan */}
+            {/* 4. Cara Menjalankan 666 MUSIC */}
             <section className="card" style={{ marginBottom: 16 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
                     <Play size={19} color="#c084fc" />
-                    <h2 style={{ fontSize: "1.1rem", fontWeight: 800 }}>4. Cara Menjalankan Lagukan</h2>
+                    <h2 style={{ fontSize: "1.1rem", fontWeight: 800 }}>4. Cara Menjalankan 666 MUSIC</h2>
                 </div>
                 <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)" }}>
-                    Gunakan skrip khusus Termux yang menjalankan Lagukan dalam mode proses tunggal hemat memori tanpa Docker:
+                    Gunakan skrip khusus Termux yang menjalankan 666 MUSIC dalam mode proses tunggal hemat memori tanpa Docker:
                 </p>
                 <div className="cmd-box">
                     <code className="cmd-text">{startCmd}</code>
@@ -144,8 +144,8 @@ export default function DocsPage({ health, onCopyText, copiedKey, onNavigate }) 
                     <h2 style={{ fontSize: "1.1rem", fontWeight: 800 }}>5. Cara Update Bot</h2>
                 </div>
                 <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)" }}>
-                    Anda dapat menjalankan ulang perintah installer lalu memilih opsi <strong>[1] Update Lagukan</strong>, atau menjalankan
-                    perintah update aman berikut (file <code>.env</code> Anda tidak akan terhapus):
+                    Anda dapat menjalankan ulang perintah installer lalu memilih opsi <strong>[1] Update 666 MUSIC</strong>, atau
+                    menjalankan perintah update aman berikut (file <code>.env</code> Anda tidak akan terhapus):
                 </p>
                 <div className="cmd-box">
                     <code className="cmd-text">{updateCmd}</code>
@@ -177,7 +177,7 @@ export default function DocsPage({ health, onCopyText, copiedKey, onNavigate }) 
                     <div>
                         <strong style={{ color: "#fff" }}>• Input teks di channel Request Musik tidak merespons:</strong>
                         <p>
-                            Aktifkan <strong>MESSAGE CONTENT INTENT</strong> di Discord Developer Portal → Bot, lalu restart Lagukan di
+                            Aktifkan <strong>MESSAGE CONTENT INTENT</strong> di Discord Developer Portal → Bot, lalu restart 666 MUSIC di
                             Termux.
                         </p>
                     </div>
@@ -208,7 +208,7 @@ export default function DocsPage({ health, onCopyText, copiedKey, onNavigate }) 
                 </div>
                 <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", marginBottom: 14 }}>
                     Butuh bantuan teknis, ingin melaporkan bug, atau mengajukan verifikasi fitur Premium server? Hubungi pemilik resmi
-                    project Lagukan melalui kanal berikut:
+                    project 666 MUSIC melalui kanal berikut:
                 </p>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
                     <a

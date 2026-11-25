@@ -21,7 +21,7 @@ const LEVEL_TIERS = [
     { level: 3, minXp: 500, title: "Music Lover", badge: "🎵" },
     { level: 4, minXp: 1500, title: "Music Addict", badge: "🔥" },
     { level: 5, minXp: 4000, title: "Music Legend", badge: "👑" },
-    { level: 6, minXp: 10000, title: "Lagukan Legend", badge: "💎" },
+    { level: 6, minXp: 10000, title: "666 MUSIC Legend", badge: "💎" },
 ];
 
 // Active per-(bot, guild) playback tracking sessions: Map<`${botId}:${guildId}`, SessionObject>
@@ -731,7 +731,7 @@ async function computeUserProfileSnapshot(client, { targetUser, targetMember = n
 }
 
 function buildMusicProfileEmbed(client, { targetUser, snapshot }) {
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.config.botName || "666 MUSIC";
     const iconUrl = client.user?.displayAvatarURL?.() || undefined;
     const avatarUrl = typeof targetUser.displayAvatarURL === "function" ? targetUser.displayAvatarURL({ size: 256 }) : iconUrl;
     const color = snapshot.premium?.customAccentColor || client.config.embedColor || "#5865F2";
@@ -959,7 +959,7 @@ async function computeMusicWrappedData(client, { userId, periodType = "weekly", 
 }
 
 function buildMusicWrappedPages(client, targetUser, wrapped) {
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.config.botName || "666 MUSIC";
     const color = client.config.embedColor || "#5865F2";
     const periodLabel =
         wrapped.periodType === "alltime"
@@ -1126,7 +1126,7 @@ function attachMusicProfileCollector(client, message, { viewerId, targetUser, ta
  */
 async function buildMusicLeaderboardPayload(client, guild, mode = "active", pageIndex = 0) {
     const gid = String(guild.id);
-    const botName = client.config.botName || "Lagukan";
+    const botName = client.config.botName || "666 MUSIC";
     const color = client.config.embedColor || "#5865F2";
     const perPage = 10;
 

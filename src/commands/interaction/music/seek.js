@@ -4,7 +4,7 @@ const { safeDeferReply, safeEditReply, safeReply } = require("../../../functions
 
 module.exports = {
     name: "seek",
-    description: "Seek the current song in Lagukan player",
+    description: "Seek the current song in 666 MUSIC player",
     category: "music",
     options: [
         {
